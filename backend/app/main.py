@@ -1,5 +1,6 @@
+from app.services.llm.router import LLMRouter
+from app.core.config import settings
 from fastapi import FastAPI
-from app.core.settings import settings
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -17,4 +18,12 @@ async def root():
 async def health():
     return {
         "status": "healthy"
+    }
+@app.get("/llm")
+def current_llm():
+    llm = LLMRouter.get_llm()
+
+    return {
+        "provider": settings.LLM_PROVIDER,
+        "service": llm.__class__.__name__,
     }
