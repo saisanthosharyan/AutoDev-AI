@@ -1,6 +1,7 @@
 from app.services.llm.router import LLMRouter
 from app.agents.base_agent import BaseAgent
 from app.models.task import Task
+from app.core.logger import logger
 
 
 class PlannerAgent(BaseAgent):
@@ -30,27 +31,7 @@ Current User Request:
 
 {task}
 
-Create a detailed software implementation plan.
-
-The steps should be sequential.
-
-Include every major component.
-
-Database
-
-Authentication
-
-Models
-
-Routes
-
-Business Logic
-
-Testing
-
-Deployment
-
-Documentation
+Create a structured implementation plan.
 
 Return ONLY JSON in this format:
 
@@ -65,14 +46,13 @@ Return ONLY JSON in this format:
 }}
 """
 
+        logger.info("Generating implementation plan...")
+
         response = await llm.generate_structured(
             prompt=prompt,
             schema=Task
         )
-        print("=" * 80)
-        print("PLANNER RESPONSE")
-        print(response)
-        print("=" * 80)
+
+        logger.info("Planner completed successfully.")
 
         return response
-    

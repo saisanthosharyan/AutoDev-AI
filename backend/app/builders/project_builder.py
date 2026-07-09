@@ -1,39 +1,99 @@
-import os
 import re
+import shutil
 from pathlib import Path
+from datetime import datetime
 
 
 class ProjectBuilder:
+    """
+    Builds a complete project from the LLM-generated output.
+    """
 
     def __init__(self):
         self.output_dir = Path("generated_projects")
-        self.output_dir.mkdir(exist_ok=True)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def build(self, project_name: str, llm_output: str):
+    def build(self, project_name: str, llm_output: str) -> dict:
+        """
+        Parses the LLM response, creates all files and folders,
+        and generates a ZIP archive of the project.
+        """
 
-        project_path = self.output_dir / project_name
-        project_path.mkdir(exist_ok=True)
+        # Create a filesystem-safe project name
+        safe_name = re.sub(
+            r"[^a-zA-Z0-9_-]",
+            "_",
+            project_name
+        ).lower()
 
-        pattern = r"FILE:\s*(.*?)\n```.*?\n(.*?)```"
+        # Unique folder name
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        matches = re.findall(pattern, llm_output, re.DOTALL)
+        project_path = self.output_dir / f"{safe_name}_{timestamp}"
+
+        project_path.mkdir(parents=True, exist_ok=True)
+
+        # Matches:
+        #
+        # FILE: README.md
+        # content...
+        #
+        # FILE: app/main.py
+        # content...
+        #
+        pattern = r"FILE:\s*(.+?)\n(.*?)(?=\nFILE:|\Z)"
+
+        matches = re.findall(
+            pattern,
+            llm_output,
+            re.DOTALL
+        )
+
+        if not matches:
+            raise ValueError(
+                "No project files were found in the LLM response."
+            )
 
         created_files = []
 
-        for file_path, content in matches:
+        for relative_path, content in matches:
 
-            file_path = file_path.strip()
+            relative_path = relative_path.strip()
+            content = content.strip()
 
-            full_path = project_path / file_path
+            destination = project_path / relative_path
 
-            full_path.parent.mkdir(parents=True, exist_ok=True)
+            destination.parent.mkdir(
+                parents=True,
+                exist_ok=True
+            )
 
-            with open(full_path, "w", encoding="utf-8") as f:
-                f.write(content.strip())
+            destination.write_text(
+                content,
+                encoding="utf-8"
+            )
 
-            created_files.append(str(full_path))
+            created_files.append(str(destination))
+
+        # Create ZIP archive
+        zip_path = self.create_zip(project_path)
 
         return {
             "project_path": str(project_path),
-            "files": created_files
+            "zip_path": zip_path,
+            "files": created_files,
+            "file_count": len(created_files),
         }
+
+    def create_zip(self, project_path: Path) -> str:
+        """
+        Creates a ZIP archive of the generated project.
+        """
+
+        zip_file = shutil.make_archive(
+            base_name=str(project_path),
+            format="zip",
+            root_dir=str(project_path)
+        )
+
+        return zip_file

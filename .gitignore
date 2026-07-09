@@ -33,3 +33,11 @@ chroma_db/
 # OS Files
 .DS_Store
 Thumbs.db
+
+generated_projects/
+*.zip
+
+generated_projects/
+*.zip
+__pycache__/
+.env

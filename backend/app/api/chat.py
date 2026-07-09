@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -31,8 +33,9 @@ async def chat(request: ChatRequest):
         orchestrator = AgentOrchestrator()
 
         result = await orchestrator.execute(
-            request.message,
-            history,
+            session_id=request.session_id,
+            task=request.message,
+            history=history,
         )
 
         add_message(
@@ -45,6 +48,11 @@ async def chat(request: ChatRequest):
             "session_id": request.session_id,
             "history": get_history(request.session_id),
             "plan": result["plan"],
+            "project": {
+                **result["project"],
+                "download_url": f"/download/{Path(result['project']['project_path']).name}",
+            },
+            "validation": result["validation"],
             "code": result["code"],
             "review": result["review"],
             "improved_code": result["improved_code"],

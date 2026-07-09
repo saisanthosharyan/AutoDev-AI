@@ -1,6 +1,7 @@
 from app.services.llm.router import LLMRouter
 from app.agents.base_agent import BaseAgent
 from app.models.task import Task
+from app.core.logger import logger
 
 
 class CoderAgent(BaseAgent):
@@ -40,13 +41,9 @@ FILE: path/to/file.py
 <file contents>
 
 - Do NOT wrap files inside markdown.
-
-- Do NOT use ```.
-
+- Do NOT use ```
 - Do NOT explain anything.
-
 - Do NOT summarize.
-
 - Return ALL necessary files.
 
 Include at minimum:
@@ -68,16 +65,10 @@ Never say "Here is your project."
 Output ONLY files.
 """
 
-        print("=" * 80)
-        print("CODER PROMPT")
-        print("=" * 80)
-        print(prompt)
-        print("=" * 80)
+        logger.info("Generating project source code...")
 
         response = await llm.generate(prompt)
 
-        print("=" * 80)
-        print("CODER RESPONSE LENGTH:", len(response))
-        print("=" * 80)
+        logger.info(f"Coder generated {len(response)} characters.")
 
         return response

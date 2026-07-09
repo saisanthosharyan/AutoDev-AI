@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from app.core.config import settings
 from app.services.llm.base import BaseLLMService
+from app.utils.retry import retry
 
 
 class GeminiService(BaseLLMService):
@@ -16,12 +17,15 @@ class GeminiService(BaseLLMService):
         self.client = genai.Client(
             api_key=settings.GEMINI_API_KEY
         )
+
         self.model = settings.GEMINI_MODEL
 
+    @retry(max_retries=3, delay=2)
     async def generate(self, prompt: str) -> str:
         """
         Generate plain text response.
         """
+
         try:
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
@@ -34,14 +38,16 @@ class GeminiService(BaseLLMService):
         except Exception as e:
             raise Exception(f"Gemini Error: {e}")
 
+    @retry(max_retries=3, delay=2)
     async def chat(self, messages: list) -> str:
         """
-        Generate a response using conversation history.
+        Generate response using conversation history.
         """
+
         try:
             prompt = "\n".join(
-                f"{msg.get('role', 'user').upper()}: {msg.get('content', '')}"
-                for msg in messages
+                f"{message.get('role', 'user').upper()}: {message.get('content', '')}"
+                for message in messages
             )
 
             response = await asyncio.to_thread(
@@ -55,10 +61,11 @@ class GeminiService(BaseLLMService):
         except Exception as e:
             raise Exception(f"Gemini Error: {e}")
 
+    @retry(max_retries=3, delay=2)
     async def generate_structured(
         self,
         prompt: str,
-        schema: BaseModel
+        schema: BaseModel,
     ):
         """
         Generate structured JSON using a Pydantic schema.
