@@ -1,57 +1,35 @@
 import subprocess
 import time
-import json
 from pathlib import Path
+
+from app.core.logger import logger
 
 
 class NodeExecutor:
 
-    def _install_dependencies(self, project: Path):
+    def run(self, project_path: str):
 
-        package = project / "package.json"
+        project = Path(project_path)
 
-        if not package.exists():
-            return
+        # --------------------------
+        # Install dependencies
+        # --------------------------
+        package_json = project / "package.json"
 
-        subprocess.run(
-            ["npm", "install"],
-            cwd=project,
-            capture_output=True,
-            text=True,
-        )
+        if package_json.exists():
 
-    def _detect_framework(self, project: Path):
+            logger.info("Installing Node dependencies...")
 
-        package = project / "package.json"
+            subprocess.run(
+                ["npm", "install"],
+                cwd=project,
+                capture_output=True,
+                text=True,
+            )
 
-        if not package.exists():
-            return "Node"
-
-        try:
-
-            data = json.loads(package.read_text())
-
-            deps = {}
-
-            deps.update(data.get("dependencies", {}))
-            deps.update(data.get("devDependencies", {}))
-
-            if "express" in deps:
-                return "Express"
-
-            if "next" in deps:
-                return "Next.js"
-
-            if "react" in deps:
-                return "React"
-
-        except Exception:
-            pass
-
-        return "Node"
-
-    def _find_entry(self, project: Path):
-
+        # --------------------------
+        # Find entry file
+        # --------------------------
         candidates = [
             "index.js",
             "server.js",
@@ -59,112 +37,43 @@ class NodeExecutor:
             "main.js",
         ]
 
-        for name in candidates:
-            for file in project.rglob(name):
-                return file
+        main_file = None
 
-        js_files = list(project.rglob("*.js"))
+        for file in candidates:
 
-        if js_files:
-            return js_files[0]
+            if (project / file).exists():
 
-        return None
+                main_file = project / file
+                break
 
-    def run(self, project_path: str):
+        if main_file is None:
 
-        project = Path(project_path)
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": "No runnable Node.js entry file found.",
+                "return_code": -1,
+                "execution_time": 0,
+            }
 
-        framework = self._detect_framework(project)
-
-        self._install_dependencies(project)
-
-        package = project / "package.json"
+        logger.info(f"Running {main_file.name}")
 
         start = time.time()
 
-        try:
+        process = subprocess.run(
+            ["node", str(main_file)],
+            cwd=project,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
 
-            if package.exists():
+        end = time.time()
 
-                try:
-                    data = json.loads(package.read_text())
-                    scripts = data.get("scripts", {})
-
-                    if "start" in scripts:
-                        command = ["npm", "start"]
-
-                    elif "dev" in scripts:
-                        command = ["npm", "run", "dev"]
-
-                    else:
-                        entry = self._find_entry(project)
-
-                        if entry is None:
-                            raise FileNotFoundError("No entry file found.")
-
-                        command = ["node", str(entry)]
-
-                except Exception:
-
-                    entry = self._find_entry(project)
-
-                    if entry is None:
-                        raise FileNotFoundError("No entry file found.")
-
-                    command = ["node", str(entry)]
-
-            else:
-
-                entry = self._find_entry(project)
-
-                if entry is None:
-                    raise FileNotFoundError("No entry file found.")
-
-                command = ["node", str(entry)]
-
-            process = subprocess.run(
-                command,
-                cwd=project,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-
-            elapsed = round(time.time() - start, 2)
-
-            return {
-                "success": process.returncode == 0,
-                "language": "Node.js",
-                "framework": framework,
-                "stdout": process.stdout,
-                "stderr": process.stderr,
-                "return_code": process.returncode,
-                "execution_time": elapsed,
-                "command": " ".join(command),
-            }
-
-        except subprocess.TimeoutExpired:
-
-            return {
-                "success": False,
-                "language": "Node.js",
-                "framework": framework,
-                "stdout": "",
-                "stderr": "Execution timed out.",
-                "return_code": -1,
-                "execution_time": 60,
-                "command": "",
-            }
-
-        except Exception as e:
-
-            return {
-                "success": False,
-                "language": "Node.js",
-                "framework": framework,
-                "stdout": "",
-                "stderr": str(e),
-                "return_code": -1,
-                "execution_time": 0,
-                "command": "",
-            }
+        return {
+            "success": process.returncode == 0,
+            "stdout": process.stdout,
+            "stderr": process.stderr,
+            "return_code": process.returncode,
+            "execution_time": round(end - start, 2),
+        }

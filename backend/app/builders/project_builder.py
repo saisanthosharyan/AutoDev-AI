@@ -13,7 +13,12 @@ class ProjectBuilder:
         self.output_dir = Path("generated_projects")
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def build(self, project_name: str, llm_output: str) -> dict:
+    def build(
+        self,
+        project_name: str,
+        llm_output: str,
+        project_path: str | None = None,
+    ) -> dict:
         """
         Parses the LLM response, creates all files and folders,
         and generates a ZIP archive of the project.
@@ -26,12 +31,27 @@ class ProjectBuilder:
             project_name
         ).lower()
 
-        # Unique folder name
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # -------------------------------------
+        # Create new project or rebuild existing
+        # -------------------------------------
 
-        project_path = self.output_dir / f"{safe_name}_{timestamp}"
+        if project_path is None:
 
-        project_path.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            project_path = (
+                self.output_dir /
+                f"{safe_name}_{timestamp}"
+            )
+
+        else:
+
+            project_path = Path(project_path)
+
+        project_path.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
 
         # Matches:
         #
@@ -68,6 +88,8 @@ class ProjectBuilder:
                 exist_ok=True
             )
 
+            # overwrite old file if it exists
+
             destination.write_text(
                 content,
                 encoding="utf-8"
@@ -97,3 +119,55 @@ class ProjectBuilder:
         )
 
         return zip_file
+    def rebuild(self, project_path: str, llm_output: str) -> dict:
+        """
+        Rebuilds an existing project by overwriting files
+        using the latest LLM output.
+        """
+
+        project = Path(project_path)
+
+        pattern = r"FILE:\s*(.+?)\n(.*?)(?=\nFILE:|\Z)"
+
+        matches = re.findall(
+            pattern,
+            llm_output,
+            re.DOTALL
+        )
+
+        if not matches:
+            raise ValueError(
+                "No project files were found in the LLM response."
+            )
+
+        updated_files = []
+
+        for relative_path, content in matches:
+
+            relative_path = relative_path.strip()
+            content = content.strip()
+
+            destination = project / relative_path
+
+            destination.parent.mkdir(
+                parents=True,
+                exist_ok=True
+            )
+
+            # overwrite old file if it exists
+
+            destination.write_text(
+                content,
+                encoding="utf-8"
+            )
+
+            updated_files.append(str(destination))
+
+        zip_path = self.create_zip(project)
+
+        return {
+            "project_path": str(project),
+            "zip_path": zip_path,
+            "files": updated_files,
+            "file_count": len(updated_files),
+        }

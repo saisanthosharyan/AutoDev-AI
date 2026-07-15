@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from app.core.logger import logger
+
 from app.services.execution.python_executor import PythonExecutor
 from app.services.execution.node_executor import NodeExecutor
 from app.services.execution.java_executor import JavaExecutor
@@ -20,64 +22,81 @@ class ExecutionManager:
 
         project = Path(project_path)
 
-        # Docker has highest priority
-        if (project / "Dockerfile").exists():
-            return "docker"
-
-        # Node.js
-        if (project / "package.json").exists():
-            return "node"
-
-        # Java
-        if list(project.rglob("*.java")):
-            return "java"
-
-        # C++
-        if list(project.rglob("*.cpp")):
-            return "cpp"
-
-        # Python
+        # -------------------------
+        # Python Project
+        # -------------------------
         if (
             (project / "requirements.txt").exists()
             or (project / "pyproject.toml").exists()
+            or (project / "main.py").exists()
+            or (project / "app.py").exists()
             or (project / "manage.py").exists()
-            or list(project.rglob("*.py"))
         ):
+            logger.info("Detected Python project.")
             return "python"
 
+        # -------------------------
+        # Node Project
+        # -------------------------
+        if (project / "package.json").exists():
+            logger.info("Detected Node project.")
+            return "node"
+
+        # -------------------------
+        # Java Project
+        # -------------------------
+        if list(project.rglob("*.java")):
+            logger.info("Detected Java project.")
+            return "java"
+
+        # -------------------------
+        # C++ Project
+        # -------------------------
+        if list(project.rglob("*.cpp")):
+            logger.info("Detected C++ project.")
+            return "cpp"
+
+        # -------------------------
+        # Docker Project
+        # -------------------------
+        if (project / "Dockerfile").exists():
+            logger.info("Detected Docker project.")
+            return "docker"
+
+        logger.warning("Unknown project type.")
         return "unknown"
 
     def run(self, project_path: str):
 
+        logger.info(f"Detecting project type: {project_path}")
+
         project_type = self.detect_project_type(project_path)
 
         if project_type == "python":
-            result = self.python.run(project_path)
+            logger.info("Running Python executor...")
+            return self.python.run(project_path)
 
-        elif project_type == "node":
-            result = self.node.run(project_path)
+        if project_type == "node":
+            logger.info("Running Node executor...")
+            return self.node.run(project_path)
 
-        elif project_type == "java":
-            result = self.java.run(project_path)
+        if project_type == "java":
+            logger.info("Running Java executor...")
+            return self.java.run(project_path)
 
-        elif project_type == "cpp":
-            result = self.cpp.run(project_path)
+        if project_type == "cpp":
+            logger.info("Running C++ executor...")
+            return self.cpp.run(project_path)
 
-        elif project_type == "docker":
-            result = self.docker.run(project_path)
+        if project_type == "docker":
+            logger.info("Running Docker executor...")
+            return self.docker.run(project_path)
 
-        else:
-            result = {
-                "success": False,
-                "language": "Unknown",
-                "framework": "Unknown",
-                "stdout": "",
-                "stderr": "Unsupported project type.",
-                "return_code": -1,
-                "execution_time": 0,
-                "command": "",
-            }
+        logger.warning("No executor available.")
 
-        result["project_type"] = project_type
-
-        return result
+        return {
+            "success": False,
+            "stdout": "",
+            "stderr": "Unknown project type.",
+            "return_code": -1,
+        }

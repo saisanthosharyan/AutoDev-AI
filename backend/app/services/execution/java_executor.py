@@ -1,5 +1,8 @@
 import subprocess
+import time
 from pathlib import Path
+
+from app.core.logger import logger
 
 
 class JavaExecutor:
@@ -8,26 +11,26 @@ class JavaExecutor:
 
         project = Path(project_path)
 
-        # Search for Java files recursively
         java_files = list(project.rglob("*.java"))
 
         if not java_files:
             return {
                 "success": False,
                 "stdout": "",
-                "stderr": "No Java file found.",
+                "stderr": "No Java source files found.",
                 "return_code": -1,
+                "execution_time": 0,
             }
 
-        main = java_files[0]
+        source = java_files[0]
 
-        # Compile
+        logger.info(f"Compiling {source.name}")
+
         compile_result = subprocess.run(
-            ["javac", str(main)],
-            cwd=project,
+            ["javac", source.name],
+            cwd=source.parent,
             capture_output=True,
             text=True,
-            timeout=60,
         )
 
         if compile_result.returncode != 0:
@@ -36,20 +39,27 @@ class JavaExecutor:
                 "stdout": compile_result.stdout,
                 "stderr": compile_result.stderr,
                 "return_code": compile_result.returncode,
+                "execution_time": 0,
             }
 
-        # Run
+        logger.info(f"Running {source.stem}")
+
+        start = time.time()
+
         run_result = subprocess.run(
-            ["java", main.stem],
-            cwd=project,
+            ["java", source.stem],
+            cwd=source.parent,
             capture_output=True,
             text=True,
             timeout=60,
         )
+
+        end = time.time()
 
         return {
             "success": run_result.returncode == 0,
             "stdout": run_result.stdout,
             "stderr": run_result.stderr,
             "return_code": run_result.returncode,
+            "execution_time": round(end - start, 2),
         }
