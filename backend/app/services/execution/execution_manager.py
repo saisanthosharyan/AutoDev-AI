@@ -23,42 +23,45 @@ class ExecutionManager:
         project = Path(project_path)
 
         # -------------------------
-        # Python Project
+        # Python (Highest Priority)
         # -------------------------
+
         if (
             (project / "requirements.txt").exists()
             or (project / "pyproject.toml").exists()
-            or (project / "main.py").exists()
-            or (project / "app.py").exists()
-            or (project / "manage.py").exists()
+            or list(project.rglob("*.py"))
         ):
             logger.info("Detected Python project.")
             return "python"
 
         # -------------------------
-        # Node Project
+        # Node
         # -------------------------
+
         if (project / "package.json").exists():
             logger.info("Detected Node project.")
             return "node"
 
         # -------------------------
-        # Java Project
+        # Java
         # -------------------------
+
         if list(project.rglob("*.java")):
             logger.info("Detected Java project.")
             return "java"
 
         # -------------------------
-        # C++ Project
+        # C++
         # -------------------------
+
         if list(project.rglob("*.cpp")):
             logger.info("Detected C++ project.")
             return "cpp"
 
         # -------------------------
-        # Docker Project
+        # Docker (Lowest Priority)
         # -------------------------
+
         if (project / "Dockerfile").exists():
             logger.info("Detected Docker project.")
             return "docker"
@@ -72,31 +75,38 @@ class ExecutionManager:
 
         project_type = self.detect_project_type(project_path)
 
-        if project_type == "python":
-            logger.info("Running Python executor...")
-            return self.python.run(project_path)
+        logger.info(f"Project type: {project_type}")
 
-        if project_type == "node":
-            logger.info("Running Node executor...")
-            return self.node.run(project_path)
-
-        if project_type == "java":
-            logger.info("Running Java executor...")
-            return self.java.run(project_path)
-
-        if project_type == "cpp":
-            logger.info("Running C++ executor...")
-            return self.cpp.run(project_path)
-
-        if project_type == "docker":
-            logger.info("Running Docker executor...")
-            return self.docker.run(project_path)
-
-        logger.warning("No executor available.")
-
-        return {
-            "success": False,
-            "stdout": "",
-            "stderr": "Unknown project type.",
-            "return_code": -1,
+        executors = {
+            "python": self.python,
+            "node": self.node,
+            "java": self.java,
+            "cpp": self.cpp,
+            "docker": self.docker,
         }
+
+        executor = executors.get(project_type)
+
+        if executor is None:
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": f"Unsupported project type: {project_type}",
+                "return_code": -1,
+                "execution_time": 0,
+            }
+
+        try:
+            return executor.run(project_path)
+
+        except Exception as e:
+
+            logger.exception("Execution Manager crashed.")
+
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": str(e),
+                "return_code": -1,
+                "execution_time": 0,
+            }

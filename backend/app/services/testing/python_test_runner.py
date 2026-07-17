@@ -10,36 +10,78 @@ class PythonTestRunner:
 
     def run(self, project_path: str):
 
-        project = Path(project_path)
+        project = Path(project_path).resolve()
 
-        # -------------------------
-        # Install dependencies
-        # -------------------------
         requirements = project / "requirements.txt"
+
+        print("=" * 60)
+        print("PROJECT :", project)
+        print("REQUIREMENTS :", requirements)
+        print("EXISTS :", requirements.exists())
+        print("=" * 60)
+
+        # --------------------------------------------------
+        # Install project dependencies
+        # --------------------------------------------------
 
         if requirements.exists():
 
             logger.info("Installing Python test dependencies...")
 
-            subprocess.run(
+            install = subprocess.run(
                 [
                     sys.executable,
                     "-m",
                     "pip",
                     "install",
                     "-r",
-                    str(requirements),
+                    "requirements.txt",   # <-- FIXED
                 ],
                 cwd=project,
                 capture_output=True,
                 text=True,
             )
 
+            print("RETURN CODE:", install.returncode)
+            print("STDOUT:")
+            print(install.stdout)
+            print("STDERR:")
+            print(install.stderr)
+
+            if install.returncode != 0:
+
+                logger.error("Dependency installation failed.")
+
+                return {
+                    "success": False,
+                    "stdout": install.stdout,
+                    "stderr": install.stderr,
+                    "return_code": install.returncode,
+                    "execution_time": 0,
+                }
+
+        # --------------------------------------------------
+        # Ensure pytest exists
+        # --------------------------------------------------
+
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "pytest",
+            ],
+            capture_output=True,
+            text=True,
+        )
+
         logger.info("Running pytest...")
 
         start = time.time()
 
         try:
+
             process = subprocess.run(
                 [
                     sys.executable,
@@ -53,31 +95,44 @@ class PythonTestRunner:
                 timeout=120,
             )
 
-            success = process.returncode == 0
-            stdout = process.stdout
-            stderr = process.stderr
-            return_code = process.returncode
+            end = time.time()
 
-        except FileNotFoundError as e:
+            if process.returncode == 5:
 
-            success = False
-            stdout = ""
-            stderr = str(e)
-            return_code = -1
+                logger.warning("No tests found.")
+
+                return {
+                    "success": True,
+                    "stdout": "No tests found.",
+                    "stderr": "",
+                    "return_code": 0,
+                    "execution_time": round(end - start, 2),
+                }
+
+            return {
+                "success": process.returncode == 0,
+                "stdout": process.stdout,
+                "stderr": process.stderr,
+                "return_code": process.returncode,
+                "execution_time": round(end - start, 2),
+            }
 
         except subprocess.TimeoutExpired:
 
-            success = False
-            stdout = ""
-            stderr = "Pytest timed out."
-            return_code = -1
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": "Pytest timed out after 120 seconds.",
+                "return_code": -1,
+                "execution_time": 120,
+            }
 
-        end = time.time()
+        except Exception as e:
 
-        return {
-            "success": success,
-            "stdout": stdout,
-            "stderr": stderr,
-            "return_code": return_code,
-            "execution_time": round(end - start, 2),
-        }
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": str(e),
+                "return_code": -1,
+                "execution_time": 0,
+            }
