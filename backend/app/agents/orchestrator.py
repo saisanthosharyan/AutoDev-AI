@@ -1,7 +1,6 @@
 from app.agents.planner import PlannerAgent
 from app.agents.coder import CoderAgent
 from app.agents.reviewer import ReviewerAgent
-from app.agents.fixer import FixerAgent
 
 from app.builders.project_builder import ProjectBuilder
 from app.validators.project_validator import ProjectValidator
@@ -11,13 +10,8 @@ from app.core.logger import logger
 
 from app.database.database import SessionLocal
 from app.database.crud import create_project
-
-from app.services.execution.execution_manager import ExecutionManager
-from app.services.debugger.debug_manager import DebugManager
+from app.services.retry.retry_manager import RetryManager
 from app.services.testing.test_manager import TestManager
-
-
-MAX_RETRIES = 3
 
 
 class AgentOrchestrator:
@@ -26,12 +20,10 @@ class AgentOrchestrator:
         self.planner = PlannerAgent()
         self.coder = CoderAgent()
         self.reviewer = ReviewerAgent()
-        self.fixer = FixerAgent()
-
+       
         self.builder = ProjectBuilder()
         self.validator = ProjectValidator()
-        self.executor = ExecutionManager()
-        self.debugger = DebugManager()
+        self.retry_manager = RetryManager()
         self.tester = TestManager()
 
     async def execute(
@@ -59,7 +51,7 @@ class AgentOrchestrator:
         logger.info("Planning completed successfully.")
 
         # ---------------------------------------------------
-        # Step 2 - Code Generation
+        # Step 2 - Generate Code
         # ---------------------------------------------------
 
         logger.info("Step 2/8 - Generating source code...")
@@ -91,67 +83,17 @@ class AgentOrchestrator:
 
         logger.info("Step 4/8 - Executing project...")
 
-        execution_result = None
-
-        for attempt in range(1, MAX_RETRIES + 1):
-
-            logger.info(
-                f"Execution Attempt {attempt}/{MAX_RETRIES}"
-            )
-
-            try:
-
-                execution_result = self.executor.run(
-                    project["project_path"]
-                )
-
-            except Exception as e:
-
-                logger.exception("Execution crashed.")
-
-                execution_result = {
-                    "success": False,
-                    "stdout": "",
-                    "stderr": str(e),
-                    "return_code": -1,
-                }
-
-            if execution_result.get("success"):
-                logger.info("Execution successful.")
-                break
-
-            logger.warning("Execution failed.")
-
-            debug_report = self.debugger.analyze(
-                execution_result
-            )
-
-            try:
-
-                fixed_code = await self.fixer.run(
-                    code=code,
-                    review="",
-                    execution_error=debug_report,
-                )
-
-                code = fixed_code
-
-                project = self.builder.rebuild(
-                    project["project_path"],
-                    fixed_code,
-                )
-
-            except Exception:
-
-                logger.exception(
-                    "Automatic repair failed."
-                )
-                break
-
-        debug_report = self.debugger.analyze(
-            execution_result
+        (
+            execution_result,
+            project,
+            code,
+            debug_report,
+        ) = await self.retry_manager.execute_with_retry(
+            project=project,
+            code=code,
         )
-                # ---------------------------------------------------
+
+        # ---------------------------------------------------
         # Step 5 - Save Project
         # ---------------------------------------------------
 
@@ -173,10 +115,11 @@ class AgentOrchestrator:
             logger.info("Project saved successfully.")
 
         finally:
+
             db.close()
 
         # ---------------------------------------------------
-        # Step 6 - Validate Project
+        # Step 6 - Validate
         # ---------------------------------------------------
 
         logger.info("Step 6/8 - Validating project...")
@@ -205,28 +148,44 @@ class AgentOrchestrator:
 
         logger.info("Step 7/8 - Running tests...")
 
-        try:
+        if execution_result.get("success"):
 
-            test_result = self.tester.run(
-                project["project_path"]
+            try:
+
+                test_result = self.tester.run(
+                    project["project_path"]
+                )
+
+                logger.info("Testing completed.")
+
+            except Exception as e:
+
+                logger.exception("Testing failed.")
+
+                test_result = {
+                    "success": False,
+                    "stdout": "",
+                    "stderr": str(e),
+                    "return_code": -1,
+                    "execution_time": 0,
+                }
+
+        else:
+
+            logger.warning(
+                "Skipping tests because execution failed."
             )
-
-            logger.info("Testing completed.")
-
-        except Exception as e:
-
-            logger.exception("Testing failed.")
 
             test_result = {
                 "success": False,
                 "stdout": "",
-                "stderr": str(e),
+                "stderr": "Tests skipped because execution failed.",
                 "return_code": -1,
                 "execution_time": 0,
             }
 
         # ---------------------------------------------------
-        # AI Code Review
+        # AI Review
         # ---------------------------------------------------
 
         logger.info("Reviewing generated project...")
@@ -242,61 +201,60 @@ class AgentOrchestrator:
             logger.exception("Reviewer failed.")
 
             review = str(e)
+
         # ---------------------------------------------------
-        # Step 8 - Improve Project (Self-Healing)
+        # Step 8 - Final Self Healing
         # ---------------------------------------------------
 
-        logger.info("Step 8/8 - Improving project...")
+        logger.info("Step 8/8 - Final self-healing...")
 
-        fixed_code = code
+        if not (
+            execution_result.get("success")
+            and test_result.get("success")
+        ):
 
-        for attempt in range(1, MAX_RETRIES + 1):
+            (
+                execution_result,
+                project,
+                code,
+                debug_report,
+            ) = await self.retry_manager.execute_with_retry(
+                project=project,
+                code=code,
+                review=review,
+            )
 
-            if execution_result.get("success") and test_result.get("success"):
-                logger.info("Project already passed execution and tests.")
-                break
+            # Run tests again after successful repair
+            if execution_result.get("success"):
 
-            logger.info(f"Repair Attempt {attempt}/{MAX_RETRIES}")
+                try:
 
-            try:
+                    test_result = self.tester.run(
+                        project["project_path"]
+                    )
 
-                fixed_code = await self.fixer.run(
-                    code=fixed_code,
-                    review=review,
-                    execution_error=debug_report,
-                )
+                    logger.info(
+                        "Testing completed after repair."
+                    )
 
-                project = self.builder.rebuild(
-                    project["project_path"],
-                    fixed_code,
-                )
+                except Exception as e:
 
-                execution_result = self.executor.run(
-                    project["project_path"]
-                )
+                    logger.exception(
+                        "Testing failed after repair."
+                    )
 
-                test_result = self.tester.run(
-                    project["project_path"]
-                )
-
-                debug_report = self.debugger.analyze(
-                    execution_result
-                )
-
-                if execution_result.get("success") and test_result.get("success"):
-
-                    logger.info("Project repaired successfully.")
-
-                    break
-
-            except Exception:
-
-                logger.exception("Repair attempt failed.")
-
-                break
+                    test_result = {
+                        "success": False,
+                        "stdout": "",
+                        "stderr": str(e),
+                        "return_code": -1,
+                        "execution_time": 0,
+                    }
 
         logger.info("=" * 60)
-        logger.info("AutoDev AI Pipeline Finished Successfully")
+        logger.info(
+            "AutoDev AI Pipeline Finished Successfully"
+        )
         logger.info("=" * 60)
 
         return {
@@ -307,5 +265,5 @@ class AgentOrchestrator:
             "tests": test_result,
             "debug_report": debug_report,
             "review": review,
-            "improved_code": fixed_code,
+            "improved_code": code,
         }

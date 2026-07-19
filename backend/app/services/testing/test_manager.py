@@ -9,56 +9,83 @@ from app.services.testing.cpp_test_runner import CPPTestRunner
 
 
 class TestManager:
+    """
+    Detects the project type and runs the appropriate test runner.
+    """
 
     def __init__(self):
-        self.python = PythonTestRunner()
-        self.node = NodeTestRunner()
-        self.java = JavaTestRunner()
-        self.cpp = CPPTestRunner()
+        self.runners = {
+            "python": PythonTestRunner(),
+            "node": NodeTestRunner(),
+            "java": JavaTestRunner(),
+            "cpp": CPPTestRunner(),
+        }
 
-    def detect_project_type(self, project_path: str):
-
+    def detect_project_type(self, project_path: str) -> str:
         project = Path(project_path)
 
+        # Python
         if (
             (project / "requirements.txt").exists()
             or (project / "pyproject.toml").exists()
+            or list(project.rglob("*.py"))
         ):
             return "python"
 
+        # Node.js
         if (project / "package.json").exists():
             return "node"
 
+        # Java
         if list(project.rglob("*.java")):
             return "java"
 
+        # C++
         if list(project.rglob("*.cpp")):
             return "cpp"
 
         return "unknown"
 
     def run(self, project_path: str):
+        """
+        Run tests for the detected project type.
+        """
 
         project_type = self.detect_project_type(project_path)
 
-        logger.info(f"Running tests for {project_type} project...")
+        logger.info(
+            f"Running tests for {project_type} project..."
+        )
 
-        if project_type == "python":
-            return self.python.run(project_path)
+        runner = self.runners.get(project_type)
 
-        if project_type == "node":
-            return self.node.run(project_path)
+        if runner is None:
 
-        if project_type == "java":
-            return self.java.run(project_path)
+            logger.warning(
+                "No supported test runner found."
+            )
 
-        if project_type == "cpp":
-            return self.cpp.run(project_path)
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": f"No supported test runner for '{project_type}' project.",
+                "return_code": -1,
+                "execution_time": 0,
+            }
 
-        return {
-            "success": False,
-            "stdout": "",
-            "stderr": "No supported test runner found.",
-            "return_code": -1,
-            "execution_time": 0,
-        }
+        try:
+            return runner.run(project_path)
+
+        except Exception as e:
+
+            logger.exception(
+                "Test execution failed."
+            )
+
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": str(e),
+                "return_code": -1,
+                "execution_time": 0,
+            }

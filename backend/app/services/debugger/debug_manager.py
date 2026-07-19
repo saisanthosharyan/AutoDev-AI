@@ -7,37 +7,98 @@ class DebugManager:
     debugging report for the Fixer Agent.
     """
 
-    def analyze(self, execution_result: dict) -> str:
+    def analyze(self, execution_result: dict | None) -> str:
         """
         Analyze execution results and return a debugging report.
         """
 
-        logger.info("Analyzing execution results...")
+        logger.info(
+            "Analyzing execution results..."
+        )
+
+        if execution_result is None:
+
+            logger.warning(
+                "Execution result is None."
+            )
+
+            return """
+=========================
+EXECUTION REPORT
+=========================
+
+Execution never started.
+
+Please identify why execution did not begin
+and fix all issues preventing startup.
+"""
 
         if execution_result.get("success", False):
-            logger.info("No execution errors detected.")
+
+            logger.info(
+                "No execution errors detected."
+            )
+
             return ""
 
-        stdout = execution_result.get("stdout", "")
-        stderr = execution_result.get("stderr", "")
-        return_code = execution_result.get("return_code", -1)
+        stdout = execution_result.get(
+            "stdout",
+            "",
+        )
+
+        stderr = execution_result.get(
+            "stderr",
+            "",
+        )
+
+        return_code = execution_result.get(
+            "return_code",
+            -1,
+        )
 
         report = f"""
-Execution failed.
+=========================
+EXECUTION REPORT
+=========================
+
+Status:
+FAILED
 
 Return Code:
 {return_code}
 
-STDOUT:
+-------------------------
+STDOUT
+-------------------------
+
 {stdout}
 
-STDERR:
+-------------------------
+STDERR
+-------------------------
+
 {stderr}
 
-Your task is to identify the cause of the failure and fix every issue
-so the project can execute successfully.
+-------------------------
+TASK
+-------------------------
+
+Identify every issue preventing execution.
+
+Fix:
+
+1. Syntax errors
+2. Runtime errors
+3. Import errors
+4. Dependency issues
+5. Missing files
+6. Configuration problems
+
+Return the fully corrected project.
 """
 
-        logger.info("Debug report generated.")
+        logger.info(
+            "Debug report generated."
+        )
 
         return report
