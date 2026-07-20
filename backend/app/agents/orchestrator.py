@@ -10,19 +10,24 @@ from app.core.logger import logger
 
 from app.database.database import SessionLocal
 from app.database.crud import create_project
+
 from app.services.retry.retry_manager import RetryManager
 from app.services.testing.test_manager import TestManager
+
+from app.websocket.manager import manager
 
 
 class AgentOrchestrator:
 
     def __init__(self):
+
         self.planner = PlannerAgent()
         self.coder = CoderAgent()
         self.reviewer = ReviewerAgent()
-       
+
         self.builder = ProjectBuilder()
         self.validator = ProjectValidator()
+
         self.retry_manager = RetryManager()
         self.tester = TestManager()
 
@@ -43,6 +48,14 @@ class AgentOrchestrator:
 
         logger.info("Step 1/8 - Planning...")
 
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Planning",
+                progress=10,
+                message="Generating implementation plan..."
+            )
+
         plan: Task = await self.planner.run(
             task,
             history,
@@ -56,7 +69,17 @@ class AgentOrchestrator:
 
         logger.info("Step 2/8 - Generating source code...")
 
-        code = await self.coder.run(plan)
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Coding",
+                progress=25,
+                message="Generating project source code..."
+            )
+
+        code = await self.coder.run(
+            plan
+        )
 
         logger.info(
             f"Generated {len(code)} characters."
@@ -68,6 +91,14 @@ class AgentOrchestrator:
 
         logger.info("Step 3/8 - Building project...")
 
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Building",
+                progress=40,
+                message="Building project structure..."
+            )
+
         project = self.builder.build(
             plan.title,
             code,
@@ -76,12 +107,19 @@ class AgentOrchestrator:
         logger.info(
             f"Project created at {project['project_path']}"
         )
-
-        # ---------------------------------------------------
+                # ---------------------------------------------------
         # Step 4 - Execute Project
         # ---------------------------------------------------
 
         logger.info("Step 4/8 - Executing project...")
+
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Execution",
+                progress=55,
+                message="Executing generated project..."
+            )
 
         (
             execution_result,
@@ -98,6 +136,14 @@ class AgentOrchestrator:
         # ---------------------------------------------------
 
         logger.info("Step 5/8 - Saving project...")
+
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Saving",
+                progress=65,
+                message="Saving project information..."
+            )
 
         db = SessionLocal()
 
@@ -124,6 +170,14 @@ class AgentOrchestrator:
 
         logger.info("Step 6/8 - Validating project...")
 
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Validation",
+                progress=75,
+                message="Validating generated project..."
+            )
+
         try:
 
             validation = self.validator.validate(
@@ -147,6 +201,14 @@ class AgentOrchestrator:
         # ---------------------------------------------------
 
         logger.info("Step 7/8 - Running tests...")
+
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Testing",
+                progress=85,
+                message="Running automated tests..."
+            )
 
         if execution_result.get("success"):
 
@@ -183,12 +245,19 @@ class AgentOrchestrator:
                 "return_code": -1,
                 "execution_time": 0,
             }
-
-        # ---------------------------------------------------
+                # ---------------------------------------------------
         # AI Review
         # ---------------------------------------------------
 
         logger.info("Reviewing generated project...")
+
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Review",
+                progress=92,
+                message="AI is reviewing the generated project..."
+            )
 
         try:
 
@@ -208,6 +277,14 @@ class AgentOrchestrator:
 
         logger.info("Step 8/8 - Final self-healing...")
 
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Self-Healing",
+                progress=96,
+                message="Fixing any remaining issues..."
+            )
+
         if not (
             execution_result.get("success")
             and test_result.get("success")
@@ -224,7 +301,6 @@ class AgentOrchestrator:
                 review=review,
             )
 
-            # Run tests again after successful repair
             if execution_result.get("success"):
 
                 try:
@@ -250,6 +326,18 @@ class AgentOrchestrator:
                         "return_code": -1,
                         "execution_time": 0,
                     }
+
+        # ---------------------------------------------------
+        # Completed
+        # ---------------------------------------------------
+
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Completed",
+                progress=100,
+                message="Project generated successfully 🎉"
+            )
 
         logger.info("=" * 60)
         logger.info(

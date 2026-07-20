@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.agents.orchestrator import AgentOrchestrator
-from app.memory.conversation import (
+from app.memory.conversation_cache import (
     add_message,
     get_history,
 )
@@ -20,9 +20,10 @@ class ChatRequest(BaseModel):
 @router.post("/chat")
 async def chat(request: ChatRequest):
     try:
-        # Get previous conversation
+        # Get previous conversation history
         history = get_history(request.session_id)
 
+        # Save user message
         add_message(
             request.session_id,
             "user",
@@ -32,11 +33,12 @@ async def chat(request: ChatRequest):
         orchestrator = AgentOrchestrator()
 
         result = await orchestrator.execute(
-            session_id=request.session_id,
             task=request.message,
             history=history,
+            session_id=request.session_id,
         )
 
+        # Save assistant response
         add_message(
             request.session_id,
             "assistant",
