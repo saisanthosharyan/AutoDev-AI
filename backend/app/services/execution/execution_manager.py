@@ -10,94 +10,126 @@ from app.services.execution.docker_executor import DockerExecutor
 
 
 class ExecutionManager:
+    """
+    Detects the generated project type and executes it
+    using the appropriate executor.
+    """
 
     def __init__(self):
-        self.python = PythonExecutor()
-        self.node = NodeExecutor()
-        self.java = JavaExecutor()
-        self.cpp = CPPExecutor()
-        self.docker = DockerExecutor()
+        self.executors = {
+            "python": PythonExecutor(),
+            "node": NodeExecutor(),
+            "java": JavaExecutor(),
+            "cpp": CPPExecutor(),
+            "docker": DockerExecutor(),
+        }
 
-    def detect_project_type(self, project_path: str):
+    # --------------------------------------------------
+    # Detect Project Type
+    # --------------------------------------------------
 
-        project = Path(project_path)
+    def detect_project_type(self, project_path: str) -> str:
 
-        # -------------------------
+        project = Path(project_path).resolve()
+
+        if not project.exists():
+            raise FileNotFoundError(
+                f"Project directory does not exist: {project}"
+            )
+
+        logger.info(f"Detecting project type inside: {project}")
+
+        # --------------------------------------------------
         # Python (Highest Priority)
-        # -------------------------
+        # --------------------------------------------------
 
         if (
             (project / "requirements.txt").exists()
             or (project / "pyproject.toml").exists()
-            or list(project.rglob("*.py"))
+            or any(project.rglob("*.py"))
         ):
             logger.info("Detected Python project.")
             return "python"
 
-        # -------------------------
-        # Node
-        # -------------------------
+        # --------------------------------------------------
+        # Node.js
+        # --------------------------------------------------
 
         if (project / "package.json").exists():
-            logger.info("Detected Node project.")
+            logger.info("Detected Node.js project.")
             return "node"
 
-        # -------------------------
+        # --------------------------------------------------
         # Java
-        # -------------------------
+        # --------------------------------------------------
 
-        if list(project.rglob("*.java")):
+        if any(project.rglob("*.java")):
             logger.info("Detected Java project.")
             return "java"
 
-        # -------------------------
+        # --------------------------------------------------
         # C++
-        # -------------------------
+        # --------------------------------------------------
 
-        if list(project.rglob("*.cpp")):
+        if any(project.rglob("*.cpp")):
             logger.info("Detected C++ project.")
             return "cpp"
 
-        # -------------------------
-        # Docker (Lowest Priority)
-        # -------------------------
+        # --------------------------------------------------
+        # Docker (Fallback)
+        # --------------------------------------------------
 
         if (project / "Dockerfile").exists():
             logger.info("Detected Docker project.")
             return "docker"
 
-        logger.warning("Unknown project type.")
+        logger.warning(f"Unable to detect project type: {project}")
+
         return "unknown"
+
+    # --------------------------------------------------
+    # Execute Project
+    # --------------------------------------------------
 
     def run(self, project_path: str):
 
-        logger.info(f"Detecting project type: {project_path}")
-
-        project_type = self.detect_project_type(project_path)
-
-        logger.info(f"Project type: {project_type}")
-
-        executors = {
-            "python": self.python,
-            "node": self.node,
-            "java": self.java,
-            "cpp": self.cpp,
-            "docker": self.docker,
-        }
-
-        executor = executors.get(project_type)
-
-        if executor is None:
-            return {
-                "success": False,
-                "stdout": "",
-                "stderr": f"Unsupported project type: {project_type}",
-                "return_code": -1,
-                "execution_time": 0,
-            }
+        logger.info("=" * 60)
+        logger.info("Execution Manager Started")
+        logger.info("=" * 60)
 
         try:
-            return executor.run(project_path)
+
+            project_type = self.detect_project_type(project_path)
+
+            logger.info(f"Selected executor: {project_type}")
+
+            executor = self.executors.get(project_type)
+
+            if executor is None:
+                logger.error(
+                    f"No executor available for '{project_type}'"
+                )
+
+                return {
+                    "success": False,
+                    "stdout": "",
+                    "stderr": f"Unsupported project type: {project_type}",
+                    "return_code": -1,
+                    "execution_time": 0,
+                }
+
+            result = executor.run(project_path)
+
+            logger.info(
+                f"{project_type.capitalize()} execution finished."
+            )
+
+            if result.get("success"):
+                logger.info("Project executed successfully.")
+            else:
+                logger.warning("Project execution failed.")
+
+            return result
 
         except Exception as e:
 
@@ -110,3 +142,9 @@ class ExecutionManager:
                 "return_code": -1,
                 "execution_time": 0,
             }
+
+        finally:
+
+            logger.info("=" * 60)
+            logger.info("Execution Manager Finished")
+            logger.info("=" * 60)

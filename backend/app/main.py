@@ -11,7 +11,7 @@ from app.api.chat import router as chat_router
 from app.api.download import router as download_router
 from app.api.projects import router as projects_router
 from app.api.ws import router as ws_router
-
+from fastapi.middleware.cors import CORSMiddleware
 
 # -------------------------------------------------------
 # FastAPI Application
@@ -21,6 +21,15 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.PROJECT_VERSION,
     description="Autonomous AI Software Engineer API",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

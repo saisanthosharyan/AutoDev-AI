@@ -4,6 +4,8 @@ from google import genai
 from pydantic import BaseModel
 
 from app.core.config import settings
+from app.core.logger import logger
+
 from app.services.llm.base import BaseLLMService
 from app.utils.retry import retry
 
@@ -14,11 +16,25 @@ class GeminiService(BaseLLMService):
     """
 
     def __init__(self):
+
+        if not settings.GEMINI_API_KEY:
+            raise ValueError(
+                "GEMINI_API_KEY is not configured."
+            )
+
         self.client = genai.Client(
             api_key=settings.GEMINI_API_KEY
         )
 
         self.model = settings.GEMINI_MODEL
+
+        logger.info(
+            f"Initialized GeminiService with model: {self.model}"
+        )
+
+    # --------------------------------------------------
+    # Generate Text
+    # --------------------------------------------------
 
     @retry(max_retries=3, delay=2)
     async def generate(self, prompt: str) -> str:
@@ -27,26 +43,58 @@ class GeminiService(BaseLLMService):
         """
 
         try:
+
+            logger.info(
+                f"Generating response using Gemini ({self.model})..."
+            )
+
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
                 model=self.model,
                 contents=prompt,
             )
 
-            return response.text or ""
+            if not response.text:
+
+                raise RuntimeError(
+                    "Gemini returned an empty response."
+                )
+
+            logger.info(
+                "Gemini text generation completed successfully."
+            )
+
+            return response.text
 
         except Exception as e:
-            raise Exception(f"Gemini Error: {e}")
+
+            logger.exception(
+                "Gemini text generation failed."
+            )
+
+            raise RuntimeError(
+                f"Gemini request failed: {e}"
+            ) from e
+
+    # --------------------------------------------------
+    # Chat
+    # --------------------------------------------------
 
     @retry(max_retries=3, delay=2)
     async def chat(self, messages: list) -> str:
         """
-        Generate response using conversation history.
+        Generate a response using conversation history.
         """
 
         try:
+
+            logger.info(
+                f"Generating chat response using Gemini ({self.model})..."
+            )
+
             prompt = "\n".join(
-                f"{message.get('role', 'user').upper()}: {message.get('content', '')}"
+                f"{message.get('role', 'user').upper()}: "
+                f"{message.get('content', '')}"
                 for message in messages
             )
 
@@ -56,10 +104,31 @@ class GeminiService(BaseLLMService):
                 contents=prompt,
             )
 
-            return response.text or ""
+            if not response.text:
+
+                raise RuntimeError(
+                    "Gemini returned an empty chat response."
+                )
+
+            logger.info(
+                "Gemini chat completed successfully."
+            )
+
+            return response.text
 
         except Exception as e:
-            raise Exception(f"Gemini Error: {e}")
+
+            logger.exception(
+                "Gemini chat request failed."
+            )
+
+            raise RuntimeError(
+                f"Gemini chat failed: {e}"
+            ) from e
+
+    # --------------------------------------------------
+    # Structured Output
+    # --------------------------------------------------
 
     @retry(max_retries=3, delay=2)
     async def generate_structured(
@@ -72,6 +141,11 @@ class GeminiService(BaseLLMService):
         """
 
         try:
+
+            logger.info(
+                f"Generating structured response using Gemini ({self.model})..."
+            )
+
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
                 model=self.model,
@@ -82,7 +156,28 @@ class GeminiService(BaseLLMService):
                 },
             )
 
-            return schema.model_validate_json(response.text)
+            if not response.text:
+
+                raise RuntimeError(
+                    "Gemini returned an empty structured response."
+                )
+
+            parsed = schema.model_validate_json(
+                response.text
+            )
+
+            logger.info(
+                "Gemini structured generation completed successfully."
+            )
+
+            return parsed
 
         except Exception as e:
-            raise Exception(f"Gemini Structured Error: {e}")
+
+            logger.exception(
+                "Gemini structured generation failed."
+            )
+
+            raise RuntimeError(
+                f"Gemini structured request failed: {e}"
+            ) from e

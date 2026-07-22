@@ -14,7 +14,7 @@ class ProjectValidator:
 
     def validate(self, project_path: str):
 
-        project = Path(project_path)
+        project = Path(project_path).resolve()
 
         report = {
             "valid": True,

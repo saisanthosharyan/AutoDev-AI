@@ -1,3 +1,5 @@
+import asyncio
+
 from app.agents.fixer import FixerAgent
 from app.builders.project_builder import ProjectBuilder
 from app.core.logger import logger
@@ -8,10 +10,12 @@ from app.services.debugger.debug_manager import DebugManager
 
 class RetryManager:
     """
-    Handles automatic project repair and retry execution.
+    Executes a generated project and automatically repairs it
+    if execution fails.
     """
 
     def __init__(self, max_retries: int = 3):
+
         self.max_retries = max_retries
 
         self.executor = ExecutionManager()
@@ -26,19 +30,12 @@ class RetryManager:
         review: str = "",
     ):
         """
-        Execute a generated project.
+        Returns
 
-        If execution fails:
-            • analyze errors
-            • repair project
-            • rebuild project
-            • retry execution
-
-        Returns:
-            execution_result,
-            updated_project,
-            updated_code,
-            debug_report
+        execution_result
+        updated_project
+        updated_code
+        debug_report
         """
 
         execution_result = None
@@ -46,9 +43,15 @@ class RetryManager:
 
         for attempt in range(1, self.max_retries + 1):
 
+            logger.info("=" * 60)
             logger.info(
                 f"Execution Attempt {attempt}/{self.max_retries}"
             )
+            logger.info("=" * 60)
+
+            # ------------------------------------------
+            # Execute Project
+            # ------------------------------------------
 
             try:
 
@@ -58,7 +61,9 @@ class RetryManager:
 
             except Exception as e:
 
-                logger.exception("Execution crashed.")
+                logger.exception(
+                    "Execution crashed."
+                )
 
                 execution_result = {
                     "success": False,
@@ -68,24 +73,48 @@ class RetryManager:
                     "execution_time": 0,
                 }
 
+            # ------------------------------------------
+            # Success
+            # ------------------------------------------
+
             if execution_result.get("success"):
 
-                logger.info("Execution successful.")
+                logger.info(
+                    "Project executed successfully."
+                )
 
                 return (
                     execution_result,
                     project,
                     code,
-                    "",
+                    debug_report,
                 )
 
-            logger.warning("Execution failed.")
+            logger.warning(
+                "Execution failed."
+            )
+
+            # ------------------------------------------
+            # Analyze Failure
+            # ------------------------------------------
 
             debug_report = self.debugger.analyze(
                 execution_result
             )
 
+            logger.info(
+                "Debug analysis completed."
+            )
+
+            # ------------------------------------------
+            # AI Repair
+            # ------------------------------------------
+
             try:
+
+                logger.info(
+                    "Requesting AI to repair project..."
+                )
 
                 fixed_code = await self.fixer.run(
                     code=code,
@@ -93,12 +122,27 @@ class RetryManager:
                     execution_error=debug_report,
                 )
 
-                code = fixed_code
+                if not fixed_code.strip():
 
-                project = self.builder.rebuild(
-                    project["project_path"],
-                    code,
-                )
+                    logger.error(
+                        "Fixer returned empty response."
+                    )
+
+                    break
+
+                if fixed_code == code:
+
+                    logger.warning(
+                        "Fixer produced identical code."
+                    )
+
+                else:
+
+                    logger.info(
+                        "Fixer generated improved code."
+                    )
+
+                code = fixed_code
 
             except Exception:
 
@@ -107,6 +151,43 @@ class RetryManager:
                 )
 
                 break
+
+            # ------------------------------------------
+            # Rebuild Project
+            # ------------------------------------------
+
+            try:
+
+                logger.info(
+                    "Rebuilding project..."
+                )
+
+                project = self.builder.rebuild(
+                    project["project_path"],
+                    code,
+                )
+
+                logger.info(
+                    "Project rebuilt successfully."
+                )
+
+            except Exception:
+
+                logger.exception(
+                    "Project rebuild failed."
+                )
+
+                break
+
+            # ------------------------------------------
+            # Small Delay
+            # ------------------------------------------
+
+            await asyncio.sleep(1)
+
+        logger.error(
+            "Maximum retry limit reached."
+        )
 
         if execution_result is None:
 

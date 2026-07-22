@@ -29,14 +29,11 @@ class ProjectBuilder:
         safe_name = self._safe_name(project_name)
 
         if project_path is None:
-
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
             project_path = (
-                self.output_dir
-                / f"{safe_name}_{timestamp}"
+                self.output_dir /
+                f"{safe_name}_{timestamp}"
             )
-
         else:
             project_path = Path(project_path).resolve()
 
@@ -112,14 +109,15 @@ class ProjectBuilder:
         llm_output = self._clean_output(llm_output)
 
         pattern = (
-            r"FILE:\s*(.+?)\n"
-            r"(.*?)(?=\nFILE:\s*|\Z)"
+            r"^\s*FILE\s*:\s*(.*?)\s*$"
+            r"([\s\S]*?)"
+            r"(?=^\s*FILE\s*:|\Z)"
         )
 
         matches = re.findall(
             pattern,
             llm_output,
-            flags=re.DOTALL | re.IGNORECASE,
+            flags=re.MULTILINE,
         )
 
         if not matches:
@@ -130,6 +128,11 @@ class ProjectBuilder:
         created = []
         seen = set()
 
+        ignored = {
+            ".ds_store",
+            "__macosx",
+        }
+
         project_root = project_path.resolve()
 
         for file_path, content in matches:
@@ -139,6 +142,18 @@ class ProjectBuilder:
                 .replace("\\", "/")
             )
 
+            file_path = re.sub(
+                r"/+",
+                "/",
+                file_path,
+            )
+
+            if file_path.lower() in ignored:
+                logger.warning(
+                    f"Ignoring system file: {file_path}"
+                )
+                continue
+
             if file_path in seen:
                 logger.warning(
                     f"Duplicate file ignored: {file_path}"
@@ -147,7 +162,13 @@ class ProjectBuilder:
 
             seen.add(file_path)
 
-            content = content.lstrip("\n")
+            content = content.strip("\n")
+
+            if not content.strip():
+                logger.warning(
+                    f"Skipping empty file: {file_path}"
+                )
+                continue
 
             destination = (
                 project_root / file_path
@@ -171,7 +192,7 @@ class ProjectBuilder:
             )
 
             logger.info(
-                f"Created {destination.relative_to(project_root)}"
+                f"Created file: {destination.relative_to(project_root)}"
             )
 
             created.append(str(destination))

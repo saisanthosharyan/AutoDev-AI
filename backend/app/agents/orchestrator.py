@@ -63,6 +63,14 @@ class AgentOrchestrator:
 
         logger.info("Planning completed successfully.")
 
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Planning",
+                progress=20,
+                message="Planning completed."
+            )
+
         # ---------------------------------------------------
         # Step 2 - Generate Code
         # ---------------------------------------------------
@@ -84,6 +92,13 @@ class AgentOrchestrator:
         logger.info(
             f"Generated {len(code)} characters."
         )
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Coding",
+                progress=35,
+                message="Source code generated successfully."
+            )
 
         # ---------------------------------------------------
         # Step 3 - Build Project
@@ -107,7 +122,14 @@ class AgentOrchestrator:
         logger.info(
             f"Project created at {project['project_path']}"
         )
-                # ---------------------------------------------------
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Building",
+                progress=50,
+                message="Project structure created successfully."
+            )
+        # ---------------------------------------------------
         # Step 4 - Execute Project
         # ---------------------------------------------------
 
@@ -130,6 +152,13 @@ class AgentOrchestrator:
             project=project,
             code=code,
         )
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Execution",
+                progress=65,
+                message="Project executed successfully."
+            )
 
         # ---------------------------------------------------
         # Step 5 - Save Project
@@ -141,7 +170,7 @@ class AgentOrchestrator:
             await manager.send_progress(
                 session_id=session_id,
                 step="Saving",
-                progress=65,
+                progress=66,
                 message="Saving project information..."
             )
 
@@ -163,6 +192,13 @@ class AgentOrchestrator:
         finally:
 
             db.close()
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Saving",
+                progress=70,
+                message="Project saved successfully."
+            )
 
         # ---------------------------------------------------
         # Step 6 - Validate
@@ -195,6 +231,14 @@ class AgentOrchestrator:
                 "errors": [str(e)],
                 "warnings": [],
             }
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Validation",
+                progress=80,
+                message="Validation completed."
+            )
+        
 
         # ---------------------------------------------------
         # Step 7 - Run Tests
@@ -245,7 +289,14 @@ class AgentOrchestrator:
                 "return_code": -1,
                 "execution_time": 0,
             }
-                # ---------------------------------------------------
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Review",
+                progress=92,
+                message="AI is reviewing the generated project..."
+            )
+        # ---------------------------------------------------
         # AI Review
         # ---------------------------------------------------
 
@@ -255,8 +306,8 @@ class AgentOrchestrator:
             await manager.send_progress(
                 session_id=session_id,
                 step="Review",
-                progress=92,
-                message="AI is reviewing the generated project..."
+                progress=95,
+                message="AI review completed."
             )
 
         try:
@@ -277,18 +328,23 @@ class AgentOrchestrator:
 
         logger.info("Step 8/8 - Final self-healing...")
 
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Self-Healing",
-                progress=96,
-                message="Fixing any remaining issues..."
-            )
-
+        # Only perform self-healing if execution or tests failed
         if not (
             execution_result.get("success")
             and test_result.get("success")
         ):
+
+            logger.warning(
+                "Issues detected. Starting self-healing process..."
+            )
+
+            if session_id:
+                await manager.send_progress(
+                    session_id=session_id,
+                    step="Self-Healing",
+                    progress=96,
+                    message="Fixing any remaining issues..."
+                )
 
             (
                 execution_result,
@@ -302,6 +358,10 @@ class AgentOrchestrator:
             )
 
             if execution_result.get("success"):
+
+                logger.info(
+                    "Self-healing completed successfully."
+                )
 
                 try:
 
@@ -327,6 +387,17 @@ class AgentOrchestrator:
                         "execution_time": 0,
                     }
 
+            else:
+
+                logger.error(
+                    "Self-healing failed. Project still contains errors."
+                )
+
+        else:
+
+            logger.info(
+                "Project passed execution and testing. Self-healing skipped."
+            )
         # ---------------------------------------------------
         # Completed
         # ---------------------------------------------------
