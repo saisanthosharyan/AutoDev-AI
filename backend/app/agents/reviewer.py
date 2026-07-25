@@ -1,101 +1,146 @@
-from app.services.llm.router import LLMRouter
 from app.agents.base_agent import BaseAgent
 from app.core.logger import logger
+from app.services.llm.router import LLMRouter
 
 
 class ReviewerAgent(BaseAgent):
+    """
+    Reviews the generated project and provides actionable feedback
+    on correctness, maintainability, security, and production readiness.
+    """
 
     async def run(
         self,
         code: str,
-    ):
+    ) -> str:
+
+        logger.info("=" * 60)
+        logger.info("Reviewer Agent Started")
+        logger.info("=" * 60)
 
         llm = LLMRouter.get_llm()
 
         prompt = f"""
-You are a Principal Software Engineer performing a production-ready code review.
+You are a Principal Software Architect performing a production-grade code review.
 
-Review the following generated project.
+Your objective is to review the ENTIRE generated project and identify every issue
+that could affect quality, correctness, security, scalability or deployment.
 
-Your job is to identify every possible issue that could affect:
+==================================================
+PROJECT SOURCE CODE
+==================================================
 
-- correctness
-- maintainability
-- scalability
-- readability
-- security
-- performance
-- testing
-- deployment
+{code}
 
-Provide your review using the following format.
+==================================================
+REVIEW CHECKLIST
+==================================================
+
+Review the project for:
+
+• Architecture
+• Folder structure
+• Naming conventions
+• Readability
+• Maintainability
+• Code duplication
+• Runtime bugs
+• Syntax issues
+• Missing files
+• Missing dependencies
+• Import problems
+• API correctness
+• Database design
+• Authentication
+• Authorization
+• Logging
+• Exception handling
+• Configuration
+• Environment variables
+• Docker support
+• Test coverage
+• Security vulnerabilities
+• Performance bottlenecks
+• Scalability
+
+==================================================
+OUTPUT FORMAT
+==================================================
 
 ## Overall Summary
 
-Short summary of the project quality.
+Provide a short summary.
 
 ---
 
 ## Strengths
 
-- ...
+List the project's strengths.
 
 ---
 
 ## Problems Found
 
-For each issue include:
+For every issue include:
 
-- File (if identifiable)
+- File
 - Problem
-- Why it is a problem
-- Severity (Low/Medium/High)
+- Reason
+- Severity (Low / Medium / High)
 
 ---
 
-## Possible Bugs
+## Possible Runtime Errors
 
-List runtime errors, syntax issues, logic bugs or missing implementations.
+List all possible runtime failures.
 
 ---
 
-## Security Issues
+## Security Review
 
-Mention:
+Check for:
 
-- secrets
-- authentication
-- authorization
+- Hardcoded secrets
 - SQL Injection
 - XSS
 - CSRF
-- unsafe file handling
-- unsafe subprocess usage
-- insecure API usage
+- Command Injection
+- Unsafe subprocess usage
+- File upload vulnerabilities
+- Authentication issues
+- Authorization issues
+- Sensitive data exposure
 
 ---
 
-## Performance Improvements
-
-Mention slow algorithms, duplicate work, unnecessary API calls, memory issues etc.
-
----
-
-## Code Quality Improvements
+## Performance Review
 
 Mention:
 
-- naming
-- modularity
-- comments
-- duplicated code
-- architecture
+- Slow algorithms
+- Duplicate processing
+- Memory issues
+- Blocking operations
+- Expensive API calls
+
+---
+
+## Code Quality
+
+Review:
+
+- SOLID principles
+- DRY principles
+- Clean Architecture
+- Modularization
+- Naming
+- Documentation
 
 ---
 
 ## Missing Files
 
-Mention any important missing files like:
+Mention missing files such as:
 
 README.md
 
@@ -105,39 +150,50 @@ package.json
 
 Dockerfile
 
+docker-compose.yml
+
 .env.example
 
 tests
 
-CI/CD configuration
+GitHub Actions
+
+CI/CD
+
+LICENSE
 
 ---
 
 ## Final Suggestions
 
-Provide concrete improvements the coding agent can apply during regeneration.
+Provide concrete improvements that can be applied automatically.
 
 ---
 
 ## Final Score
 
-Score out of 10.
+Give a score out of 10.
 
-Project Code:
+==================================================
+RULES
+==================================================
 
-{code}
-
-Rules:
-
+- Do NOT rewrite the project.
+- Do NOT generate source code.
 - Be specific.
-- Do not rewrite the entire project.
 - Focus on actionable improvements.
+- Mention both strengths and weaknesses.
+- Prefer production-readiness over style opinions.
 """
 
         logger.info("Reviewing generated project...")
 
-        response = await llm.generate(prompt)
+        review = await llm.generate(prompt)
 
-        logger.info("Reviewer completed successfully.")
+        logger.info("Review completed successfully.")
 
-        return response
+        logger.info("=" * 60)
+        logger.info("Reviewer Agent Finished")
+        logger.info("=" * 60)
+
+        return review

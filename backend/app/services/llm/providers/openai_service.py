@@ -36,10 +36,12 @@ class OpenAIService(BaseLLMService):
 
     @retry(max_retries=3, delay=2)
     async def generate(self, prompt: str) -> str:
+        
         """
         Generate plain text.
         """
-
+        if not prompt.strip():
+            raise ValueError("Prompt cannot be empty.")
         try:
 
             logger.info(
@@ -79,10 +81,12 @@ class OpenAIService(BaseLLMService):
 
     @retry(max_retries=3, delay=2)
     async def chat(self, messages: list) -> str:
+        
         """
         Generate chat response.
         """
-
+        if not messages:
+            raise ValueError("Messages cannot be empty.")
         try:
 
             logger.info(
@@ -124,12 +128,14 @@ class OpenAIService(BaseLLMService):
     async def generate_structured(
         self,
         prompt: str,
-        schema: BaseModel,
+        schema: type[BaseModel],
     ):
+        
         """
         Generate structured JSON using a Pydantic schema.
         """
-
+        if not prompt.strip():
+            raise ValueError("Prompt cannot be empty.")
         try:
 
             logger.info(

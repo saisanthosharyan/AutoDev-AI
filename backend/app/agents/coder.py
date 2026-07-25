@@ -1,25 +1,42 @@
-from app.services.llm.router import LLMRouter
 from app.agents.base_agent import BaseAgent
-from app.models.task import Task
 from app.core.logger import logger
+from app.models.task import Task
+from app.services.llm.router import LLMRouter
 
 
 class CoderAgent(BaseAgent):
+    """
+    Generates a complete production-ready software project
+    from the implementation plan.
+    """
 
-    async def run(self, task: Task):
+    async def run(
+        self,
+        task: Task,
+    ) -> str:
+
+        logger.info("=" * 60)
+        logger.info("Coder Agent Started")
+        logger.info("=" * 60)
 
         llm = LLMRouter.get_llm()
 
         steps = "\n".join(
-            f"- {step}" for step in task.steps
+            f"- {step}"
+            for step in task.steps
         )
 
         prompt = f"""
-You are AutoDev AI, an expert senior software engineer capable of building complete production-ready software projects.
+You are AutoDev AI.
 
-=========================
+You are a Principal Software Engineer, Software Architect, DevOps Engineer,
+QA Engineer, Security Engineer and Database Engineer.
+
+Your responsibility is to generate a COMPLETE production-ready software project.
+
+==================================================
 PROJECT INFORMATION
-=========================
+==================================================
 
 Title:
 {task.title}
@@ -30,91 +47,119 @@ Description:
 Implementation Steps:
 {steps}
 
-=========================
+==================================================
 YOUR RESPONSIBILITIES
-=========================
+==================================================
 
-Determine the most appropriate:
+Determine the best:
 
-- Programming language
-- Framework
-- Database
-- Folder structure
-- Architecture
-- Dependencies
+• Programming language
+• Framework
+• Database
+• Project architecture
+• Folder structure
+• Dependencies
+• Configuration
+• Testing framework
 
-Use modern best practices.
+Choose modern technologies automatically.
 
-=========================
+==================================================
 PROJECT REQUIREMENTS
-=========================
+==================================================
 
 Generate a COMPLETE project.
 
 Include every required file.
 
-Examples include:
+Examples:
 
 README.md
-requirements.txt OR package.json
+
 .gitignore
+
 .env.example
+
+requirements.txt OR package.json
+
 Dockerfile
-docker-compose.yml (if needed)
+
+docker-compose.yml (if required)
 
 Configuration files
 
-Source code
+Database models
 
-Tests
+API routes
+
+Frontend
+
+Backend
+
+Utilities
 
 Assets
 
+Tests
+
+CI configuration (if appropriate)
+
 Documentation
 
-Generate a complete folder structure.
-
-=========================
+==================================================
 CODE QUALITY
-=========================
+==================================================
 
-Every file must:
+Every generated file MUST:
 
-- Be production ready
-- Use clean architecture
-- Use proper naming
-- Include type hints where applicable
-- Include docstrings
-- Handle exceptions
-- Use logging when appropriate
+- Compile successfully
+- Execute successfully
+- Contain production-ready code
 - Follow SOLID principles
 - Follow DRY principles
+- Use meaningful names
+- Include error handling
+- Include logging where appropriate
+- Use type hints when applicable
+- Include docstrings where appropriate
+- Avoid duplicate code
 
-Never generate placeholder code.
+Never generate:
 
-Never generate TODO.
+- TODO
+- FIXME
+- Placeholder code
+- Pseudo code
+- Empty implementations
 
-Never generate FIXME.
+==================================================
+DEPENDENCIES
+==================================================
 
-Never generate pseudo code.
+Ensure:
 
-Never skip implementations.
+- Every dependency is declared.
+- Every import exists.
+- No missing packages.
+- No broken imports.
+- No invalid references.
 
-=========================
+==================================================
 TESTING
-=========================
+==================================================
 
-Generate tests.
+Generate executable tests.
 
-Tests should be executable.
+Include:
 
-Generate unit tests.
+- Unit tests
+- Integration tests (when appropriate)
 
-Generate integration tests when appropriate.
+The generated project should pass automated execution.
 
-=========================
+==================================================
 README
-=========================
+==================================================
 
 README must include:
 
@@ -132,23 +177,25 @@ Environment Variables
 
 Dependencies
 
-How to Run
+Running the Project
 
-How to Test
+Running Tests
+
+Deployment
 
 License
 
-=========================
+==================================================
 OUTPUT FORMAT
-=========================
+==================================================
 
-Return ONLY files.
+Return ONLY project files.
 
-Every file MUST begin exactly like:
+Every file MUST begin exactly like this:
 
 FILE: path/to/file.ext
 
-<content>
+<file contents>
 
 Example:
 
@@ -161,25 +208,31 @@ FILE: requirements.txt
 fastapi
 uvicorn
 
-Rules:
+==================================================
+RULES
+==================================================
 
-Do NOT use markdown.
-
-Do NOT use ```.
-
-Do NOT explain anything.
-
-Do NOT add comments outside files.
-
-Begin immediately with the first FILE:.
-
-Never output anything except project files.
+- Return ONLY project files.
+- Do NOT use markdown.
+- Do NOT use ``` fences.
+- Do NOT explain anything.
+- Do NOT summarize.
+- Do NOT output comments outside files.
+- Begin immediately with FILE:
+- Every generated file must be included.
+- The project must be executable without manual modifications.
 """
 
-        logger.info("Generating project source code...")
+        logger.info("Generating production-ready project...")
 
         response = await llm.generate(prompt)
 
-        logger.info(f"Coder generated {len(response)} characters.")
+        logger.info(
+            f"Generated {len(response)} characters of source code."
+        )
+
+        logger.info("=" * 60)
+        logger.info("Coder Agent Finished")
+        logger.info("=" * 60)
 
         return response

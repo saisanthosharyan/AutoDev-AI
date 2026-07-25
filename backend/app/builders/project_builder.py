@@ -12,9 +12,12 @@ class ProjectBuilder:
     """
 
     def __init__(self):
-        self.output_dir = Path("generated_projects").resolve()
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        root_dir = Path(__file__).resolve().parents[3]
 
+        self.output_dir = (
+            root_dir / "generated_projects"
+        )
+        self.output_dir.mkdir(parents=True, exist_ok=True)
     # --------------------------------------------------
     # Public
     # --------------------------------------------------
@@ -121,16 +124,26 @@ class ProjectBuilder:
         )
 
         if not matches:
+            logger.error(
+                "No FILE: sections found in LLM output."
+            )
             raise ValueError(
                 "LLM returned no project files."
             )
 
-        created = []
+        created: list[str] = []
         seen = set()
 
         ignored = {
-            ".ds_store",
-            "__macosx",
+            ".git",
+            ".github",
+            ".idea",
+            ".vscode",
+            "__pycache__",
+            ".pytest_cache",
+            ".mypy_cache",
+            ".DS_Store",
+            "__MACOSX",
         }
 
         project_root = project_path.resolve()
@@ -162,7 +175,7 @@ class ProjectBuilder:
 
             seen.add(file_path)
 
-            content = content.strip("\n")
+            content = content.strip()
 
             if not content.strip():
                 logger.warning(
@@ -174,9 +187,9 @@ class ProjectBuilder:
                 project_root / file_path
             ).resolve()
 
-            if not str(destination).startswith(
-                str(project_root)
-            ):
+            try:
+                destination.relative_to(project_root)
+            except ValueError:
                 raise ValueError(
                     f"Unsafe file path detected: {file_path}"
                 )
@@ -186,16 +199,26 @@ class ProjectBuilder:
                 exist_ok=True,
             )
 
-            destination.write_text(
-                content,
-                encoding="utf-8",
-            )
+            try:
 
-            logger.info(
-                f"Created file: {destination.relative_to(project_root)}"
-            )
+                destination.write_text(
+                    content,
+                    encoding="utf-8",
+                )
 
-            created.append(str(destination))
+                logger.info(
+                    f"Created file: {destination.relative_to(project_root)}"
+                )
+
+                created.append(str(destination))
+
+            except Exception:
+
+                logger.exception(
+                    f"Failed writing file: {file_path}"
+                )
+
+                raise
 
         return created
 
@@ -214,7 +237,7 @@ class ProjectBuilder:
         archive = shutil.make_archive(
             base_name=str(project_path),
             format="zip",
-            root_dir=str(project_path),
+            root_dir=project_path,
         )
 
         logger.info(
@@ -235,11 +258,21 @@ class ProjectBuilder:
 
         for item in project_path.iterdir():
 
-            if item.is_dir():
-                shutil.rmtree(item)
+            try:
 
-            else:
-                item.unlink()
+                if item.is_dir():
+                    shutil.rmtree(item)
+
+                else:
+                    item.unlink()
+
+            except Exception:
+
+                logger.exception(
+                    f"Unable to remove {item}"
+                )
+
+                raise
 
     # --------------------------------------------------
 

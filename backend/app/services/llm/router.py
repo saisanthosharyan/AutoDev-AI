@@ -7,13 +7,13 @@ from app.services.llm.providers.gemini_service import GeminiService
 
 class LLMRouter:
     """
-    Returns the highest-priority available LLM provider.
+    Singleton router for LLM providers.
 
-    The router maintains singleton instances of providers to avoid
-    recreating clients repeatedly.
+    Selects the highest-priority configured provider and
+    reuses provider instances for better performance.
     """
 
-    _instances = {}
+    _instances: dict[str, object] = {}
 
     # --------------------------------------------------
     # Provider Factory
@@ -22,26 +22,26 @@ class LLMRouter:
     @classmethod
     def _get_provider(cls, provider: str):
 
-        provider = provider.lower()
+        provider = provider.strip().lower()
 
         if provider in cls._instances:
             return cls._instances[provider]
 
         logger.info(f"Initializing LLM provider: {provider}")
 
-        if provider == "gemini":
+        providers = {
+            "gemini": GeminiService,
+            "openai": OpenAIService,
+        }
 
-            cls._instances[provider] = GeminiService()
+        provider_class = providers.get(provider)
 
-        elif provider == "openai":
-
-            cls._instances[provider] = OpenAIService()
-
-        else:
-
+        if provider_class is None:
             raise ValueError(
                 f"Unsupported LLM provider: {provider}"
             )
+
+        cls._instances[provider] = provider_class()
 
         return cls._instances[provider]
 
@@ -50,17 +50,15 @@ class LLMRouter:
     # --------------------------------------------------
 
     @classmethod
-    def _providers(cls):
+    def _providers(cls) -> list[str]:
 
-        providers = []
+        priority = getattr(settings, "LLM_PRIORITY", "")
 
-        if getattr(settings, "LLM_PRIORITY", None):
-
-            providers = [
-                provider.strip().lower()
-                for provider in settings.LLM_PRIORITY.split(",")
-                if provider.strip()
-            ]
+        providers = [
+            provider.strip().lower()
+            for provider in priority.split(",")
+            if provider.strip()
+        ]
 
         if not providers:
 
@@ -79,12 +77,7 @@ class LLMRouter:
     @classmethod
     def get_llm(cls):
         """
-        Returns the highest-priority configured LLM provider.
-
-        Example:
-
-            llm = LLMRouter.get_llm()
-            await llm.generate(...)
+        Returns the highest-priority configured provider.
         """
 
         providers = cls._providers()

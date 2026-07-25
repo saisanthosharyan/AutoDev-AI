@@ -21,65 +21,117 @@ class TestManager:
             "cpp": CPPTestRunner(),
         }
 
+    # --------------------------------------------------
+    # Detect Project Type
+    # --------------------------------------------------
+
     def detect_project_type(self, project_path: str) -> str:
-        project = Path(project_path)
+
+        project = Path(project_path).resolve()
+
+        if not project.exists():
+            raise FileNotFoundError(
+                f"Project directory does not exist: {project}"
+            )
 
         # Python
         if (
             (project / "requirements.txt").exists()
             or (project / "pyproject.toml").exists()
-            or list(project.rglob("*.py"))
+            or any(project.rglob("*.py"))
         ):
+            logger.info("Detected Python project.")
             return "python"
 
         # Node.js
         if (project / "package.json").exists():
+            logger.info("Detected Node.js project.")
             return "node"
 
         # Java
-        if list(project.rglob("*.java")):
+        if any(project.rglob("*.java")):
+            logger.info("Detected Java project.")
             return "java"
 
         # C++
-        if list(project.rglob("*.cpp")):
+        if any(project.rglob("*.cpp")):
+            logger.info("Detected C++ project.")
             return "cpp"
+
+        logger.warning("Unable to detect project type.")
 
         return "unknown"
 
+    # --------------------------------------------------
+    # Run Tests
+    # --------------------------------------------------
+
     def run(self, project_path: str):
-        """
-        Run tests for the detected project type.
-        """
 
-        project_type = self.detect_project_type(project_path)
-
-        logger.info(
-            f"Running tests for {project_type} project..."
-        )
-
-        runner = self.runners.get(project_type)
-
-        if runner is None:
-
-            logger.warning(
-                "No supported test runner found."
-            )
-
-            return {
-                "success": False,
-                "stdout": "",
-                "stderr": f"No supported test runner for '{project_type}' project.",
-                "return_code": -1,
-                "execution_time": 0,
-            }
+        logger.info("=" * 60)
+        logger.info("Test Manager Started")
+        logger.info("=" * 60)
 
         try:
-            return runner.run(project_path)
+
+            project_type = self.detect_project_type(project_path)
+
+            logger.info(
+                f"Selected test runner: {project_type}"
+            )
+
+            runner = self.runners.get(project_type)
+
+            if runner is None:
+
+                logger.warning(
+                    f"No supported test runner for '{project_type}' project."
+                )
+
+                return {
+                    "success": False,
+                    "stdout": "",
+                    "stderr": (
+                        f"No supported test runner for "
+                        f"'{project_type}' project."
+                    ),
+                    "return_code": -1,
+                    "execution_time": 0,
+                }
+
+            result = runner.run(project_path)
+
+            if result.get("success"):
+
+                logger.info(
+                    "Testing completed successfully."
+                )
+
+            else:
+
+                logger.warning(
+                    "Testing failed."
+                )
+
+                logger.error(
+                    result.get(
+                        "stderr",
+                        "No stderr available."
+                    )
+                )
+
+                if result.get("stdout"):
+
+                    logger.info(
+                        result["stdout"]
+                    )
+
+            return result
 
         except Exception as e:
 
             logger.exception(
-                "Test execution failed."
+                "Test Manager crashed."
             )
 
             return {
@@ -89,3 +141,9 @@ class TestManager:
                 "return_code": -1,
                 "execution_time": 0,
             }
+
+        finally:
+
+            logger.info("=" * 60)
+            logger.info("Test Manager Finished")
+            logger.info("=" * 60)

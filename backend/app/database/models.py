@@ -1,30 +1,55 @@
+from datetime import datetime
+
 from sqlalchemy import Column
+from sqlalchemy import DateTime
 from sqlalchemy import Integer
 from sqlalchemy import String
 from sqlalchemy import Text
-from sqlalchemy import DateTime
-
-from datetime import datetime
 
 from .database import Base
 
 
 class Project(Base):
+    """
+    Stores generated projects.
+    """
+
     __tablename__ = "projects"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
 
-    session_id = Column(String, index=True)
+    session_id = Column(
+        String(100),
+        index=True,
+        nullable=False,
+    )
 
-    title = Column(String)
+    title = Column(
+        String(255),
+        nullable=False,
+    )
 
-    prompt = Column(Text)
+    prompt = Column(
+        Text,
+        nullable=False,
+    )
 
-    project_path = Column(String)
+    project_path = Column(
+        String(500),
+        nullable=False,
+    )
 
-    zip_path = Column(String)
+    zip_path = Column(
+        String(500),
+        nullable=False,
+    )
 
     created_at = Column(
         DateTime,
-        default=datetime.utcnow
+        default=datetime.utcnow,
+        nullable=False,
     )

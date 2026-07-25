@@ -1,4 +1,6 @@
 from pathlib import Path
+import shutil
+import time
 
 from app.core.logger import logger
 
@@ -7,6 +9,7 @@ from app.services.execution.node_executor import NodeExecutor
 from app.services.execution.java_executor import JavaExecutor
 from app.services.execution.cpp_executor import CPPExecutor
 from app.services.execution.docker_executor import DockerExecutor
+from app.services.execution.execution_logger import ExecutionLogger
 
 
 class ExecutionManager:
@@ -16,6 +19,7 @@ class ExecutionManager:
     """
 
     def __init__(self):
+
         self.executors = {
             "python": PythonExecutor(),
             "node": NodeExecutor(),
@@ -37,11 +41,11 @@ class ExecutionManager:
                 f"Project directory does not exist: {project}"
             )
 
-        logger.info(f"Detecting project type inside: {project}")
+        logger.info(f"Detecting project type: {project}")
 
-        # --------------------------------------------------
-        # Python (Highest Priority)
-        # --------------------------------------------------
+        # -----------------------------
+        # Python
+        # -----------------------------
 
         if (
             (project / "requirements.txt").exists()
@@ -51,44 +55,46 @@ class ExecutionManager:
             logger.info("Detected Python project.")
             return "python"
 
-        # --------------------------------------------------
-        # Node.js
-        # --------------------------------------------------
+        # -----------------------------
+        # Node
+        # -----------------------------
 
         if (project / "package.json").exists():
             logger.info("Detected Node.js project.")
             return "node"
 
-        # --------------------------------------------------
+        # -----------------------------
         # Java
-        # --------------------------------------------------
+        # -----------------------------
 
         if any(project.rglob("*.java")):
             logger.info("Detected Java project.")
             return "java"
 
-        # --------------------------------------------------
+        # -----------------------------
         # C++
-        # --------------------------------------------------
+        # -----------------------------
 
         if any(project.rglob("*.cpp")):
             logger.info("Detected C++ project.")
             return "cpp"
 
-        # --------------------------------------------------
-        # Docker (Fallback)
-        # --------------------------------------------------
+        # -----------------------------
+        # Docker
+        # -----------------------------
 
-        if (project / "Dockerfile").exists():
+        if (
+            (project / "Dockerfile").exists()
+            and shutil.which("docker")
+        ):
             logger.info("Detected Docker project.")
             return "docker"
 
-        logger.warning(f"Unable to detect project type: {project}")
-
+        logger.warning("Unknown project type.")
         return "unknown"
 
     # --------------------------------------------------
-    # Execute Project
+    # Execute
     # --------------------------------------------------
 
     def run(self, project_path: str):
@@ -97,18 +103,15 @@ class ExecutionManager:
         logger.info("Execution Manager Started")
         logger.info("=" * 60)
 
+        start = time.time()
+
         try:
 
             project_type = self.detect_project_type(project_path)
 
-            logger.info(f"Selected executor: {project_type}")
-
             executor = self.executors.get(project_type)
 
             if executor is None:
-                logger.error(
-                    f"No executor available for '{project_type}'"
-                )
 
                 return {
                     "success": False,
@@ -118,16 +121,43 @@ class ExecutionManager:
                     "execution_time": 0,
                 }
 
-            result = executor.run(project_path)
+            logger.info(f"Using executor: {project_type}")
 
-            logger.info(
-                f"{project_type.capitalize()} execution finished."
+            result = executor.run(project_path)
+            ExecutionLogger(project_path).save(result)
+            # -----------------------------
+            # Automatic Docker Fallback
+            # -----------------------------
+
+            if (
+                project_type == "docker"
+                and result.get("skip", False)
+            ):
+
+                logger.info(
+                    "Docker unavailable. Falling back to Python executor..."
+                )
+
+                result = self.executors["python"].run(project_path)
+
+            result.setdefault("success", False)
+            result.setdefault("stdout", "")
+            result.setdefault("stderr", "")
+            result.setdefault("return_code", -1)
+
+            result["execution_time"] = round(
+                time.time() - start,
+                2,
             )
 
-            if result.get("success"):
-                logger.info("Project executed successfully.")
+            if result["success"]:
+
+                logger.info("Execution completed successfully.")
+
             else:
-                logger.warning("Project execution failed.")
+
+                logger.warning("Execution failed.")
+                logger.error(result["stderr"])
 
             return result
 
@@ -140,7 +170,10 @@ class ExecutionManager:
                 "stdout": "",
                 "stderr": str(e),
                 "return_code": -1,
-                "execution_time": 0,
+                "execution_time": round(
+                    time.time() - start,
+                    2,
+                ),
             }
 
         finally:

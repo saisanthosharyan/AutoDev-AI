@@ -1,3 +1,4 @@
+import json
 import shutil
 import subprocess
 import time
@@ -6,115 +7,357 @@ from pathlib import Path
 from app.core.logger import logger
 
 
+
 class NodeExecutor:
+    """
+    Executes Node.js based projects.
 
-    def run(self, project_path: str):
+    Supported:
+    - React
+    - Vite
+    - Next.js
+    - Express
+    - NestJS
+    - Plain Node.js
+    """
 
-        project = Path(project_path)
+    INSTALL_TIMEOUT = 300
+    EXECUTION_TIMEOUT = 120
+    
+    def run(self, project_path: str) -> dict:
+
+        project = Path(project_path).resolve()
 
         if not project.exists():
-            return {
-                "success": False,
-                "stdout": "",
-                "stderr": f"Project does not exist: {project}",
-                "return_code": -1,
-                "execution_time": 0,
-            }
+            return self._result(
+                False,
+                "",
+                f"Project does not exist: {project}",
+                -1,
+                0,
+            )
 
-        # -------------------------------------------------
-        # Check Node installation
-        # -------------------------------------------------
+        logger.info("=" * 60)
+        logger.info("Node Executor Started")
+        logger.info("=" * 60)
 
         node_path = shutil.which("node")
         npm_path = shutil.which("npm")
 
         if node_path is None:
-            return {
-                "success": False,
-                "stdout": "",
-                "stderr": "Node.js is not installed or not found in PATH.",
-                "return_code": -1,
-                "execution_time": 0,
-            }
+            return self._result(
+                False,
+                "",
+                "Node.js not found in PATH.",
+                -1,
+                0,
+            )
 
         if npm_path is None:
-            return {
-                "success": False,
-                "stdout": "",
-                "stderr": "npm is not installed or not found in PATH.",
-                "return_code": -1,
-                "execution_time": 0,
-            }
+            return self._result(
+                False,
+                "",
+                "npm not found in PATH.",
+                -1,
+                0,
+            )
 
-        logger.info(f"Node executable: {node_path}")
-        logger.info(f"NPM executable : {npm_path}")
-
-        # -------------------------------------------------
-        # Install dependencies
-        # -------------------------------------------------
+        logger.info(f"Node executable : {node_path}")
+        logger.info(f"NPM executable  : {npm_path}")
 
         package_json = project / "package.json"
 
-        if package_json.exists():
+        try:
 
-            logger.info("Installing Node dependencies...")
+            if package_json.is_file():
 
-            try:
+                package = self._read_package(package_json)
 
-                install = subprocess.run(
-                    [npm_path, "install"],
-                    cwd=project,
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
+                install_result = self._install_dependencies(
+                    project,
+                    npm_path,
                 )
 
-                if install.returncode != 0:
+                if install_result is not None:
+                    return install_result
 
-                    return {
-                        "success": False,
-                        "stdout": install.stdout,
-                        "stderr": install.stderr,
-                        "return_code": install.returncode,
-                        "execution_time": 0,
-                    }
+                command = self._select_command(
+                    package,
+                    project,
+                    npm_path,
+                    node_path,
+                )
 
-            except subprocess.TimeoutExpired:
+            else:
 
-                return {
-                    "success": False,
-                    "stdout": "",
-                    "stderr": "npm install timed out.",
-                    "return_code": -1,
-                    "execution_time": 300,
-                }
+                command = self._fallback_command(
+                    project,
+                    node_path,
+                )
 
-            except Exception as e:
+            return self._execute(project, command)
+        
 
-                return {
-                    "success": False,
-                    "stdout": "",
-                    "stderr": str(e),
-                    "return_code": -1,
-                    "execution_time": 0,
-                }
+        except RuntimeError as e:
+
+            return self._result(
+                False,
+                "",
+                str(e),
+                -1,
+                0,
+            )   
+        finally:
+
+            logger.info("=" * 60)
+            logger.info("Node Executor Finished")
+            logger.info("=" * 60)
+
+    def _result(
+        self,
+        success: bool,
+        stdout: str,
+        stderr: str,
+        return_code: int,
+        execution_time: float,
+    ):
+        return {
+            "success": success,
+            "stdout": stdout,
+            "stderr": stderr,
+            "return_code": return_code,
+            "execution_time": execution_time,
+        }
+
+    def _read_package(self, package_json: Path):
+
+        try:
+            with open(package_json, "r", encoding="utf-8") as file:
+                package = json.load(file)
+
+                if not isinstance(package, dict):
+                    raise RuntimeError("Invalid package.json")
+
+            logger.info("package.json loaded successfully.")
+            return package
+
+        except Exception as e:
+            logger.exception("Failed to read package.json")
+            raise RuntimeError(str(e))
+
+    def _install_dependencies(
+        self,
+        project: Path,
+        npm_path: str,
+    ):
+
+        node_modules = project / "node_modules"
+
+        if node_modules.exists() and node_modules.is_dir():
+            logger.info("Dependencies already installed.")
+            return None
+
+        logger.info("Installing Node dependencies...")
+
+        start = time.time()
+
+        try:
+
+            process = subprocess.run(
+                [npm_path, "install"],
+                cwd=project,
+                capture_output=True,
+                text=True,
+                timeout=self.INSTALL_TIMEOUT,
+            )
+
+            end = time.time()
+
+            if process.stdout:
+                logger.info(process.stdout)
+
+            if process.stderr:
+                logger.error(process.stderr)
+
+            if process.returncode != 0:
+                return self._result(
+                    False,
+                    process.stdout,
+                    process.stderr,
+                    process.returncode,
+                    round(end - start, 2),
+                )
+
+            logger.info(
+                f"Dependencies installed successfully in {round(end - start, 2)} seconds."
+            )
+
+            return None
+
+        except subprocess.TimeoutExpired:
+            return self._result(
+                False,
+                "",
+                "npm install timed out.",
+                -1,
+                self.INSTALL_TIMEOUT,
+            )
+
+        except Exception as e:
+            logger.exception("Dependency installation failed.")
+
+            return self._result(
+                False,
+                "",
+                str(e),
+                -1,
+                0,
+            )
+            
+    def _select_command(
+        self,
+        package: dict,
+        project: Path,
+        npm_path: str,
+        node_path: str,
+    ):
+
+        scripts = package.get("scripts", {})
+
+        dependencies = {
+            **package.get("dependencies", {}),
+            **package.get("devDependencies", {}),
+        }
+
+        logger.info("Detecting Node.js project type...")
 
         # -------------------------------------------------
-        # Detect entry file
+        # Next.js
         # -------------------------------------------------
+
+        if "next" in dependencies:
+
+            logger.info("Detected Next.js project.")
+
+            if "build" in scripts:
+                return [npm_path, "run", "build"]
+
+            if "dev" in scripts:
+                return [npm_path, "run", "dev"]
+
+        # -------------------------------------------------
+        # React + Vite
+        # -------------------------------------------------
+
+        if "vite" in dependencies:
+
+            logger.info("Detected Vite project.")
+
+            if "build" in scripts:
+                return [npm_path, "run", "build"]
+
+            if "dev" in scripts:
+                return [npm_path, "run", "dev"]
+
+        # -------------------------------------------------
+        # React (Create React App)
+        # -------------------------------------------------
+
+        if "react-scripts" in dependencies:
+
+            logger.info("Detected React project.")
+
+            if "build" in scripts:
+                return [npm_path, "run", "build"]
+
+            if "start" in scripts:
+                return [npm_path, "run", "start"]
+
+        # -------------------------------------------------
+        # NestJS
+        # -------------------------------------------------
+
+        if "@nestjs/core" in dependencies:
+
+            logger.info("Detected NestJS project.")
+
+            if "build" in scripts:
+                return [npm_path, "run", "build"]
+
+            if "start" in scripts:
+                return [npm_path, "run", "start"]
+
+        # -------------------------------------------------
+        # Express
+        # -------------------------------------------------
+
+        if "express" in dependencies:
+
+            logger.info("Detected Express project.")
+
+            if "start" in scripts:
+                return [npm_path, "run", "start"]
+
+            if "dev" in scripts:
+                return [npm_path, "run", "dev"]
+
+            server = project / "server.js"
+
+            if server.exists():
+                return [node_path, str(server)]
+
+        # -------------------------------------------------
+        # Generic package.json scripts
+        # -------------------------------------------------
+
+        priority = [
+            "build",
+            "start",
+            "dev",
+            "serve",
+            "preview",
+        ]
+
+        for script in priority:
+
+            if script in scripts:
+
+                logger.info(f"Using npm script: {script}")
+
+                return [
+                    npm_path,
+                    "run",
+                    script,
+                ]
+
+        # -------------------------------------------------
+        # Plain Node.js fallback
+        # -------------------------------------------------
+
+        return self._fallback_command(
+            project,
+            node_path,
+        )
+        
+        
+    def _fallback_command(
+        self,
+        project: Path,
+        node_path: str,
+    ):
+
+        logger.info("Using fallback Node.js execution.")
 
         candidates = [
-            "index.js",
             "server.js",
+            "index.js",
             "app.js",
             "main.js",
-            "src/index.js",
             "src/server.js",
+            "src/index.js",
             "src/app.js",
             "src/main.js",
         ]
-
-        main_file = None
 
         for candidate in candidates:
 
@@ -122,64 +365,84 @@ class NodeExecutor:
 
             if file.exists():
 
-                main_file = file
+                logger.info(f"Found entry file: {candidate}")
 
-                break
+                return [
+                    node_path,
+                    str(file),
+                ]
 
-        if main_file is None:
+        raise RuntimeError(
+            "No runnable Node.js entry file found."
+        )
+    def _execute(
+        self,
+        project: Path,
+        command: list[str],
+    ):
 
-            return {
-                "success": False,
-                "stdout": "",
-                "stderr": "No runnable Node.js entry file found.",
-                "return_code": -1,
-                "execution_time": 0,
-            }
+        logger.info("=" * 60)
+        logger.info("Executing Node Project")
+        logger.info("=" * 60)
 
-        logger.info(f"Running {main_file}")
-
-        # -------------------------------------------------
-        # Execute project
-        # -------------------------------------------------
+        logger.info(f"Command: {' '.join(command)}")
 
         start = time.time()
 
         try:
 
             process = subprocess.run(
-                [node_path, str(main_file)],
+                command,
                 cwd=project,
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=self.EXECUTION_TIMEOUT,
             )
 
             end = time.time()
 
-            return {
-                "success": process.returncode == 0,
-                "stdout": process.stdout,
-                "stderr": process.stderr,
-                "return_code": process.returncode,
-                "execution_time": round(end - start, 2),
-            }
+            execution_time = round(end - start, 2)
+
+            if process.stdout:
+                logger.info(process.stdout)
+
+            if process.stderr:
+                logger.error(process.stderr)
+
+            logger.info(
+                f"Execution finished in {execution_time} seconds."
+            )
+
+            return self._result(
+                success=process.returncode == 0,
+                stdout=process.stdout,
+                stderr=process.stderr,
+                return_code=process.returncode,
+                execution_time=execution_time,
+            )
 
         except subprocess.TimeoutExpired:
 
-            return {
-                "success": False,
-                "stdout": "",
-                "stderr": "Node execution timed out.",
-                "return_code": -1,
-                "execution_time": 60,
-            }
+            logger.error(
+                f"Execution timed out after {self.EXECUTION_TIMEOUT} seconds."
+            )
+
+            return self._result(
+                False,
+                "",
+                f"Execution timed out after {self.EXECUTION_TIMEOUT} seconds.",
+                -1,
+                self.EXECUTION_TIMEOUT,
+            )
 
         except Exception as e:
 
-            return {
-                "success": False,
-                "stdout": "",
-                "stderr": str(e),
-                "return_code": -1,
-                "execution_time": 0,
-            }
+            logger.exception("Unexpected execution error.")
+
+            return self._result(
+                False,
+                "",
+                str(e),
+                -1,
+                0,
+            )

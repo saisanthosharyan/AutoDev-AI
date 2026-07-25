@@ -41,3 +41,4 @@ generated_projects/
 *.zip
 __pycache__/
 .env
+backend/test_models.py

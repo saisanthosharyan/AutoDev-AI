@@ -34,7 +34,7 @@ class AgentOrchestrator:
     async def execute(
         self,
         task: str,
-        history: list = None,
+        history: list | None = None,
         session_id: str | None = None,
     ):
 
@@ -42,9 +42,9 @@ class AgentOrchestrator:
         logger.info("Starting AutoDev AI Pipeline")
         logger.info("=" * 60)
 
-        # ---------------------------------------------------
-        # Step 1 - Planning
-        # ---------------------------------------------------
+        # =====================================================
+        # STEP 1 - PLANNING
+        # =====================================================
 
         logger.info("Step 1/8 - Planning...")
 
@@ -53,56 +53,56 @@ class AgentOrchestrator:
                 session_id=session_id,
                 step="Planning",
                 progress=10,
-                message="Generating implementation plan..."
+                message="Generating implementation plan...",
             )
 
-        plan: Task = await self.planner.run(
-            task,
-            history,
-        )
+        plan: Task = await self.planner.run(task, history)
 
-        logger.info("Planning completed successfully.")
+        if plan is None:
+            raise RuntimeError("Planner failed to generate task.")
+
+        logger.info("Planning completed.")
 
         if session_id:
             await manager.send_progress(
                 session_id=session_id,
                 step="Planning",
                 progress=20,
-                message="Planning completed."
+                message="Planning completed.",
             )
 
-        # ---------------------------------------------------
-        # Step 2 - Generate Code
-        # ---------------------------------------------------
+        # =====================================================
+        # STEP 2 - GENERATE CODE
+        # =====================================================
 
-        logger.info("Step 2/8 - Generating source code...")
+        logger.info("Step 2/8 - Generating code...")
 
         if session_id:
             await manager.send_progress(
                 session_id=session_id,
                 step="Coding",
                 progress=25,
-                message="Generating project source code..."
+                message="Generating source code...",
             )
 
-        code = await self.coder.run(
-            plan
-        )
+        code = await self.coder.run(plan)
 
-        logger.info(
-            f"Generated {len(code)} characters."
-        )
+        if not code:
+            raise RuntimeError("Coder failed to generate source code.")
+
+        logger.info(f"Generated {len(code)} characters.")
+
         if session_id:
             await manager.send_progress(
                 session_id=session_id,
                 step="Coding",
                 progress=35,
-                message="Source code generated successfully."
+                message="Source code generated.",
             )
 
-        # ---------------------------------------------------
-        # Step 3 - Build Project
-        # ---------------------------------------------------
+        # =====================================================
+        # STEP 3 - BUILD PROJECT
+        # =====================================================
 
         logger.info("Step 3/8 - Building project...")
 
@@ -111,36 +111,59 @@ class AgentOrchestrator:
                 session_id=session_id,
                 step="Building",
                 progress=40,
-                message="Building project structure..."
+                message="Creating project structure...",
             )
 
-        project = self.builder.build(
-            plan.title,
-            code,
-        )
+        try:
+            project = self.builder.build(
+                plan.title,
+                code,
+            )
+
+        except Exception as e:
+            logger.exception("Project Builder failed.")
+            raise RuntimeError(str(e))
+
+        if (
+            not project
+            or "project_path" not in project
+            or "zip_path" not in project
+        ):
+            raise RuntimeError("Project Builder returned invalid data.")
 
         logger.info(
             f"Project created at {project['project_path']}"
         )
+
         if session_id:
             await manager.send_progress(
                 session_id=session_id,
                 step="Building",
                 progress=50,
-                message="Project structure created successfully."
+                message="Project built successfully.",
             )
-        # ---------------------------------------------------
-        # Step 4 - Execute Project
-        # ---------------------------------------------------
+        # =====================================================
+        # STEP 4 - EXECUTE PROJECT
+        # =====================================================
 
-        logger.info("Step 4/8 - Executing project...")
+        logger.info("Step 4/9 - Executing project...")
 
         if session_id:
             await manager.send_progress(
                 session_id=session_id,
                 step="Execution",
                 progress=55,
-                message="Executing generated project..."
+                message="Executing generated project...",
+            )
+
+        retry_result = await self.retry_manager.execute_with_retry(
+            project=project,
+            code=code,
+        )
+
+        if retry_result is None:
+            raise RuntimeError(
+                "RetryManager returned no result."
             )
 
         (
@@ -148,70 +171,30 @@ class AgentOrchestrator:
             project,
             code,
             debug_report,
-        ) = await self.retry_manager.execute_with_retry(
-            project=project,
-            code=code,
-        )
+        ) = retry_result
+
+        logger.info("Execution completed.")
+
         if session_id:
             await manager.send_progress(
                 session_id=session_id,
                 step="Execution",
                 progress=65,
-                message="Project executed successfully."
+                message="Execution completed.",
             )
 
-        # ---------------------------------------------------
-        # Step 5 - Save Project
-        # ---------------------------------------------------
+        # =====================================================
+        # STEP 5 - VALIDATE PROJECT
+        # =====================================================
 
-        logger.info("Step 5/8 - Saving project...")
-
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Saving",
-                progress=66,
-                message="Saving project information..."
-            )
-
-        db = SessionLocal()
-
-        try:
-
-            create_project(
-                db=db,
-                session_id=session_id or "default",
-                title=plan.title,
-                prompt=task,
-                project_path=project["project_path"],
-                zip_path=project["zip_path"],
-            )
-
-            logger.info("Project saved successfully.")
-
-        finally:
-
-            db.close()
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Saving",
-                progress=70,
-                message="Project saved successfully."
-            )
-
-        # ---------------------------------------------------
-        # Step 6 - Validate
-        # ---------------------------------------------------
-
-        logger.info("Step 6/8 - Validating project...")
+        logger.info("Step 5/9 - Validating project...")
 
         if session_id:
             await manager.send_progress(
                 session_id=session_id,
                 step="Validation",
-                progress=75,
-                message="Validating generated project..."
+                progress=70,
+                message="Validating generated project...",
             )
 
         try:
@@ -231,30 +214,30 @@ class AgentOrchestrator:
                 "errors": [str(e)],
                 "warnings": [],
             }
+
         if session_id:
             await manager.send_progress(
                 session_id=session_id,
                 step="Validation",
-                progress=80,
-                message="Validation completed."
+                progress=75,
+                message="Validation completed.",
             )
-        
 
-        # ---------------------------------------------------
-        # Step 7 - Run Tests
-        # ---------------------------------------------------
+        # =====================================================
+        # STEP 6 - RUN TESTS
+        # =====================================================
 
-        logger.info("Step 7/8 - Running tests...")
+        logger.info("Step 6/9 - Running automated tests...")
 
         if session_id:
             await manager.send_progress(
                 session_id=session_id,
                 step="Testing",
-                progress=85,
-                message="Running automated tests..."
+                progress=80,
+                message="Running automated tests...",
             )
 
-        if execution_result.get("success"):
+        if execution_result and execution_result.get("success"):
 
             try:
 
@@ -285,29 +268,31 @@ class AgentOrchestrator:
             test_result = {
                 "success": False,
                 "stdout": "",
-                "stderr": "Tests skipped because execution failed.",
+                "stderr": "Execution failed. Tests skipped.",
                 "return_code": -1,
                 "execution_time": 0,
             }
+
         if session_id:
             await manager.send_progress(
                 session_id=session_id,
-                step="Review",
-                progress=92,
-                message="AI is reviewing the generated project..."
+                step="Testing",
+                progress=85,
+                message="Testing completed.",
             )
-        # ---------------------------------------------------
-        # AI Review
-        # ---------------------------------------------------
 
-        logger.info("Reviewing generated project...")
+        # =====================================================
+        # STEP 7 - AI REVIEW
+        # =====================================================
+
+        logger.info("Step 7/9 - AI Review...")
 
         if session_id:
             await manager.send_progress(
                 session_id=session_id,
                 step="Review",
-                progress=95,
-                message="AI review completed."
+                progress=90,
+                message="AI is reviewing the project...",
             )
 
         try:
@@ -320,22 +305,33 @@ class AgentOrchestrator:
 
             logger.exception("Reviewer failed.")
 
-            review = str(e)
+            review = {
+                "success": False,
+                "error": str(e),
+            }
 
-        # ---------------------------------------------------
-        # Step 8 - Final Self Healing
-        # ---------------------------------------------------
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Review",
+                progress=95,
+                message="AI review completed.",
+            )
+                # =====================================================
+        # STEP 8 - SELF HEALING
+        # =====================================================
 
-        logger.info("Step 8/8 - Final self-healing...")
+        logger.info("Step 8/9 - Self Healing...")
 
-        # Only perform self-healing if execution or tests failed
         if not (
-            execution_result.get("success")
+            execution_result
+            and execution_result.get("success")
+            and test_result
             and test_result.get("success")
         ):
 
             logger.warning(
-                "Issues detected. Starting self-healing process..."
+                "Problems detected. Starting self-healing..."
             )
 
             if session_id:
@@ -343,71 +339,178 @@ class AgentOrchestrator:
                     session_id=session_id,
                     step="Self-Healing",
                     progress=96,
-                    message="Fixing any remaining issues..."
+                    message="Repairing project...",
                 )
 
-            (
-                execution_result,
-                project,
-                code,
-                debug_report,
-            ) = await self.retry_manager.execute_with_retry(
+            retry_result = await self.retry_manager.execute_with_retry(
                 project=project,
                 code=code,
                 review=review,
             )
 
-            if execution_result.get("success"):
+            if retry_result is None:
 
-                logger.info(
-                    "Self-healing completed successfully."
+                logger.error(
+                    "RetryManager returned no result."
                 )
-
-                try:
-
-                    test_result = self.tester.run(
-                        project["project_path"]
-                    )
-
-                    logger.info(
-                        "Testing completed after repair."
-                    )
-
-                except Exception as e:
-
-                    logger.exception(
-                        "Testing failed after repair."
-                    )
-
-                    test_result = {
-                        "success": False,
-                        "stdout": "",
-                        "stderr": str(e),
-                        "return_code": -1,
-                        "execution_time": 0,
-                    }
 
             else:
 
-                logger.error(
-                    "Self-healing failed. Project still contains errors."
-                )
+                (
+                    execution_result,
+                    project,
+                    code,
+                    debug_report,
+                ) = retry_result
+
+                if execution_result.get("success"):
+
+                    logger.info(
+                        "Project repaired successfully."
+                    )
+
+                    # -----------------------------------------
+                    # Re-Validate
+                    # -----------------------------------------
+
+                    try:
+
+                        validation = self.validator.validate(
+                            project["project_path"]
+                        )
+
+                        logger.info(
+                            "Validation completed after repair."
+                        )
+
+                    except Exception as e:
+
+                        logger.exception(
+                            "Validation failed after repair."
+                        )
+
+                        validation = {
+                            "valid": False,
+                            "errors": [str(e)],
+                            "warnings": [],
+                        }
+
+                    # -----------------------------------------
+                    # Re-Test
+                    # -----------------------------------------
+
+                    try:
+
+                        test_result = self.tester.run(
+                            project["project_path"]
+                        )
+
+                        logger.info(
+                            "Tests completed after repair."
+                        )
+
+                    except Exception as e:
+
+                        logger.exception(
+                            "Testing failed after repair."
+                        )
+
+                        test_result = {
+                            "success": False,
+                            "stdout": "",
+                            "stderr": str(e),
+                            "return_code": -1,
+                            "execution_time": 0,
+                        }
+
+                    # -----------------------------------------
+                    # Re-Review
+                    # -----------------------------------------
+
+                    try:
+
+                        review = await self.reviewer.run(
+                            code
+                        )
+
+                        logger.info(
+                            "Review completed after repair."
+                        )
+
+                    except Exception as e:
+
+                        logger.exception(
+                            "Reviewer failed after repair."
+                        )
+
+                        review = {
+                            "success": False,
+                            "error": str(e),
+                        }
+
+                else:
+
+                    logger.error(
+                        "Self-healing could not repair the project."
+                    )
 
         else:
 
             logger.info(
-                "Project passed execution and testing. Self-healing skipped."
+                "Execution and tests passed. Self-healing skipped."
             )
-        # ---------------------------------------------------
-        # Completed
-        # ---------------------------------------------------
+
+        # =====================================================
+        # STEP 9 - SAVE PROJECT
+        # =====================================================
+
+        logger.info("Step 9/9 - Saving project...")
+
+        if session_id:
+            await manager.send_progress(
+                session_id=session_id,
+                step="Saving",
+                progress=98,
+                message="Saving project...",
+            )
+
+        db = SessionLocal()
+
+        try:
+
+            create_project(
+                db=db,
+                session_id=session_id or "default",
+                title=plan.title,
+                prompt=task,
+                project_path=project["project_path"],
+                zip_path=project["zip_path"],
+            )
+
+            logger.info(
+                "Project saved successfully."
+            )
+
+        except Exception as e:
+
+            logger.exception(
+                f"Failed to save project: {e}"
+            )
+
+        finally:
+
+            db.close()
+
+        # =====================================================
+        # COMPLETED
+        # =====================================================
 
         if session_id:
             await manager.send_progress(
                 session_id=session_id,
                 step="Completed",
                 progress=100,
-                message="Project generated successfully 🎉"
+                message="Project generated successfully 🎉",
             )
 
         logger.info("=" * 60)
@@ -415,6 +518,12 @@ class AgentOrchestrator:
             "AutoDev AI Pipeline Finished Successfully"
         )
         logger.info("=" * 60)
+
+        execution_result = execution_result or {}
+        validation = validation or {}
+        test_result = test_result or {}
+        review = review or {}
+        debug_report = debug_report or {}
 
         return {
             "plan": plan.model_dump(),
