@@ -1,33 +1,36 @@
 from app.core.config import settings
 from app.core.logger import logger
 
-from app.services.llm.providers.openai_service import OpenAIService
+from app.services.llm.base import BaseLLMService
+from app.services.llm.fallback_service import FallbackLLMService
 from app.services.llm.providers.gemini_service import GeminiService
+from app.services.llm.providers.openai_service import OpenAIService
 
 
 class LLMRouter:
     """
-    Singleton router for LLM providers.
+    LLM provider router with automatic fallback support.
 
-    Selects the highest-priority configured provider and
-    reuses provider instances for better performance.
+    Providers are attempted in the order defined by LLM_PRIORITY.
     """
 
-    _instances: dict[str, object] = {}
+    _instances: dict[str, BaseLLMService] = {}
 
     # --------------------------------------------------
     # Provider Factory
     # --------------------------------------------------
 
     @classmethod
-    def _get_provider(cls, provider: str):
+    def _get_provider(cls, provider: str) -> BaseLLMService:
 
         provider = provider.strip().lower()
 
         if provider in cls._instances:
             return cls._instances[provider]
 
-        logger.info(f"Initializing LLM provider: {provider}")
+        logger.info(
+            f"Initializing LLM provider: {provider}"
+        )
 
         providers = {
             "gemini": GeminiService,
@@ -41,9 +44,11 @@ class LLMRouter:
                 f"Unsupported LLM provider: {provider}"
             )
 
-        cls._instances[provider] = provider_class()
+        instance = provider_class()
 
-        return cls._instances[provider]
+        cls._instances[provider] = instance
+
+        return instance
 
     # --------------------------------------------------
     # Provider Priority
@@ -52,7 +57,11 @@ class LLMRouter:
     @classmethod
     def _providers(cls) -> list[str]:
 
-        priority = getattr(settings, "LLM_PRIORITY", "")
+        priority = getattr(
+            settings,
+            "LLM_PRIORITY",
+            "",
+        )
 
         providers = [
             provider.strip().lower()
@@ -63,7 +72,8 @@ class LLMRouter:
         if not providers:
 
             logger.warning(
-                "LLM_PRIORITY not configured. Falling back to Gemini."
+                "LLM_PRIORITY not configured. "
+                "Falling back to Gemini."
             )
 
             providers = ["gemini"]
@@ -75,15 +85,46 @@ class LLMRouter:
     # --------------------------------------------------
 
     @classmethod
-    def get_llm(cls):
+    def get_llm(cls) -> BaseLLMService:
         """
-        Returns the highest-priority configured provider.
+        Return an LLM service with automatic fallback support.
         """
 
-        providers = cls._providers()
+        provider_names = cls._providers()
 
         logger.info(
-            f"Selected LLM Provider: {providers[0]}"
+            "Configured LLM providers: "
+            + ", ".join(provider_names)
         )
 
-        return cls._get_provider(providers[0])
+        providers: list[tuple[str, BaseLLMService]] = []
+
+        for provider_name in provider_names:
+
+            try:
+
+                provider = cls._get_provider(
+                    provider_name
+                )
+
+                providers.append(
+                    (
+                        provider_name,
+                        provider,
+                    )
+                )
+
+            except Exception as e:
+
+                logger.warning(
+                    f"Unable to initialize provider "
+                    f"{provider_name}: {e}"
+                )
+
+        if not providers:
+
+            raise RuntimeError(
+                "No configured LLM providers are available."
+            )
+
+        return FallbackLLMService(providers)

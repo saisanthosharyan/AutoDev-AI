@@ -1,28 +1,82 @@
+import json
+
 from app.services.llm.router import LLMRouter
 from app.agents.base_agent import BaseAgent
 from app.core.logger import logger
 
 
 class FixerAgent(BaseAgent):
+    """
+    AI agent responsible for repairing generated projects
+    after execution failures.
+
+    The agent receives:
+        - Existing generated project
+        - Code review
+        - Execution/debug report
+
+    It returns the COMPLETE corrected project using FILE sections.
+    """
 
     async def run(
         self,
         code: str,
         review: str,
-        execution_error: str = "",
-    ):
+        execution_error: dict | str = "",
+    ) -> str:
+
+        if not code or not code.strip():
+
+            raise ValueError(
+                "Generated project code cannot be empty."
+            )
 
         llm = LLMRouter.get_llm()
+
+        # ------------------------------------------------------
+        # Convert debug report into readable JSON
+        # ------------------------------------------------------
+
+        if isinstance(
+            execution_error,
+            dict,
+        ):
+
+            execution_error_text = json.dumps(
+                execution_error,
+                indent=2,
+                ensure_ascii=False,
+            )
+
+        else:
+
+            execution_error_text = str(
+                execution_error or ""
+            )
 
         prompt = f"""
 You are a Principal Software Engineer and Software Architect.
 
-Your job is to repair a generated software project.
+You are repairing an automatically generated software project.
 
-The repaired project MUST compile, execute successfully, and preserve all existing functionality.
+Your goal is to produce a COMPLETE corrected project that:
+
+1. Runs successfully.
+2. Fixes the reported execution failure.
+3. Preserves all existing functionality.
+4. Preserves the project architecture where possible.
+5. Does not remove working features.
+6. Does not invent unnecessary functionality.
+7. Contains all required files.
+8. Contains correct dependencies.
+9. Contains correct configuration.
+10. Contains correct imports.
+11. Contains correct entry points.
+12. Uses valid syntax.
+13. Can actually be executed by the appropriate runtime.
 
 ==================================================
-GENERATED PROJECT
+CURRENT GENERATED PROJECT
 ==================================================
 
 {code}
@@ -31,68 +85,129 @@ GENERATED PROJECT
 CODE REVIEW
 ==================================================
 
-{review}
+{review or "No code review available."}
 
 ==================================================
-EXECUTION ERRORS
+EXECUTION / DEBUG REPORT
 ==================================================
 
-{execution_error}
+{execution_error_text}
 
-Your responsibilities:
+==================================================
+REPAIR OBJECTIVES
+==================================================
 
-1. Fix all syntax errors.
-2. Fix runtime errors.
-3. Fix import errors.
-4. Fix dependency issues.
-5. Fix incorrect package versions.
-6. Fix missing modules.
-7. Fix broken APIs.
-8. Fix database issues.
-9. Fix configuration issues.
-10. Fix Docker/configuration files if necessary.
-11. Fix folder structure.
-12. Add missing files if required.
-13. Remove duplicate code.
-14. Improve readability.
-15. Improve performance where appropriate.
-16. Preserve all working functionality.
-17. Do NOT remove existing features.
-18. Keep project architecture clean.
-19. Ensure every generated file is complete.
-20. Ensure the project is production-ready.
+Fix the actual root cause of the execution failure.
 
-IMPORTANT OUTPUT RULES
+Check all of the following where applicable:
+
+- syntax errors
+- runtime errors
+- import errors
+- missing dependencies
+- incorrect dependencies
+- incorrect package versions
+- missing files
+- broken file paths
+- incorrect entry points
+- broken APIs
+- incorrect function calls
+- incorrect configuration
+- environment variable handling
+- database configuration
+- frontend/backend communication
+- Node.js module configuration
+- Python package configuration
+- Java compilation problems
+- C++ compilation problems
+- Docker configuration
+- port configuration
+- file/folder structure
+- duplicate code
+- incomplete files
+
+IMPORTANT:
+
+Do NOT solve the problem by deleting features.
+
+Do NOT replace a real implementation with placeholder code.
+
+Do NOT return partial files.
+
+Do NOT return explanations.
+
+Do NOT return analysis.
+
+Do NOT return a summary.
+
+Do NOT return markdown.
+
+Do NOT use code fences.
+
+==================================================
+STRICT OUTPUT FORMAT
+==================================================
 
 Return ONLY project files.
 
-Every file MUST begin exactly like this:
+Every file MUST start exactly with:
 
-FILE: path/to/file.py
+FILE: relative/path/to/file
 
-<file contents>
+Example:
 
-Do NOT use markdown.
+FILE: package.json
 
-Do NOT use ```.
+{{
+  "name": "example"
+}}
 
-Do NOT explain anything.
+FILE: src/server.js
 
-Do NOT summarize.
+const express = require("express");
 
-Do NOT say "Here is the fixed project."
+...
+
+Rules:
+
+- Use relative file paths only.
+- Never use absolute paths.
+- Include every required project file.
+- Include unchanged files if they are part of the project.
+- Do not omit package.json.
+- Do not omit requirements.txt when required.
+- Do not omit configuration files when required.
+- Do not omit source files.
+- Do not add explanations before or after the files.
+- Do not use ```.
 
 Return the COMPLETE corrected project.
-
-Every file should be included again, even if unchanged.
-
-Output ONLY files.
 """
 
-        logger.info("Starting AI project repair...")
+        logger.info(
+            "Starting AI project repair..."
+        )
 
-        response = await llm.generate(prompt)
+        response = await llm.generate(
+            prompt
+        )
 
-        logger.info("Project repair completed successfully.")
+        if response is None:
+
+            raise RuntimeError(
+                "Fixer LLM returned None."
+            )
+
+        response = response.strip()
+
+        if not response:
+
+            raise RuntimeError(
+                "Fixer LLM returned an empty response."
+            )
+
+        logger.info(
+            "AI project repair completed."
+        )
 
         return response

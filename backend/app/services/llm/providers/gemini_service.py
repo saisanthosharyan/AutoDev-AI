@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 from google import genai
 from pydantic import BaseModel
@@ -7,6 +8,12 @@ from app.core.config import settings
 from app.core.logger import logger
 from app.services.llm.base import BaseLLMService
 from app.utils.retry import retry
+
+
+class GeminiQuotaError(RuntimeError):
+    """Raised when Gemini API quota is exhausted."""
+
+    pass
 
 
 class GeminiService(BaseLLMService):
@@ -30,16 +37,15 @@ class GeminiService(BaseLLMService):
         )
 
     # --------------------------------------------------------
-    # Internal Helper
+    # Internal Helpers
     # --------------------------------------------------------
 
     def _extract_text(self, response) -> str:
         """
-        Extract text safely from Gemini response.
+        Safely extract text from Gemini response.
         """
 
         try:
-
             if getattr(response, "text", None):
                 return response.text.strip()
 
@@ -47,7 +53,6 @@ class GeminiService(BaseLLMService):
             pass
 
         try:
-
             if getattr(response, "candidates", None):
 
                 texts = []
@@ -79,12 +84,45 @@ class GeminiService(BaseLLMService):
 
         return ""
 
+    def _handle_error(self, error: Exception, operation: str):
+        """
+        Convert Gemini errors into meaningful application errors.
+        """
+
+        error_text = str(error)
+
+        # Gemini quota / rate limit
+        if (
+            "429" in error_text
+            or "RESOURCE_EXHAUSTED" in error_text
+            or "quota" in error_text.lower()
+        ):
+
+            logger.error(
+                f"Gemini quota exhausted during {operation}."
+            )
+
+            raise GeminiQuotaError(
+                "Gemini API quota has been exhausted. "
+                "Please wait for the quota to reset or configure "
+                "another LLM provider."
+            ) from error
+
+        logger.exception(
+            f"Gemini {operation} failed."
+        )
+
+        raise RuntimeError(
+            f"Gemini {operation} failed: {error}"
+        ) from error
+
     # --------------------------------------------------------
     # TEXT GENERATION
     # --------------------------------------------------------
 
     @retry(max_retries=3, delay=2)
     async def generate(self, prompt: str) -> str:
+
         if not prompt.strip():
             raise ValueError("Prompt cannot be empty.")
 
@@ -99,8 +137,6 @@ class GeminiService(BaseLLMService):
                 model=self.model,
                 contents=prompt,
             )
-
-            logger.debug(response)
 
             text = self._extract_text(response)
 
@@ -120,15 +156,15 @@ class GeminiService(BaseLLMService):
 
             return text
 
+        except GeminiQuotaError:
+            raise
+
         except Exception as e:
 
-            logger.exception(
-                "Gemini text generation failed."
+            self._handle_error(
+                e,
+                "text generation"
             )
-
-            raise RuntimeError(
-                f"Gemini request failed: {e}"
-            ) from e
 
     # --------------------------------------------------------
     # CHAT
@@ -136,6 +172,7 @@ class GeminiService(BaseLLMService):
 
     @retry(max_retries=3, delay=2)
     async def chat(self, messages: list) -> str:
+
         if not messages:
             raise ValueError("Messages cannot be empty.")
 
@@ -146,7 +183,8 @@ class GeminiService(BaseLLMService):
             )
 
             prompt = "\n".join(
-                f"{m.get('role','user').upper()}: {m.get('content','')}"
+                f"{m.get('role', 'user').upper()}: "
+                f"{m.get('content', '')}"
                 for m in messages
             )
 
@@ -174,15 +212,15 @@ class GeminiService(BaseLLMService):
 
             return text
 
+        except GeminiQuotaError:
+            raise
+
         except Exception as e:
 
-            logger.exception(
-                "Gemini chat failed."
+            self._handle_error(
+                e,
+                "chat"
             )
-
-            raise RuntimeError(
-                f"Gemini chat failed: {e}"
-            ) from e
 
     # --------------------------------------------------------
     # STRUCTURED OUTPUT
@@ -194,13 +232,15 @@ class GeminiService(BaseLLMService):
         prompt: str,
         schema: type[BaseModel],
     ):
+
         if not prompt.strip():
             raise ValueError("Prompt cannot be empty.")
 
         try:
 
             logger.info(
-                f"Generating structured response using Gemini ({self.model})..."
+                f"Generating structured response using Gemini "
+                f"({self.model})..."
             )
 
             response = await asyncio.to_thread(
@@ -233,12 +273,12 @@ class GeminiService(BaseLLMService):
 
             return parsed
 
+        except GeminiQuotaError:
+            raise
+
         except Exception as e:
 
-            logger.exception(
-                "Gemini structured generation failed."
+            self._handle_error(
+                e,
+                "structured generation"
             )
-
-            raise RuntimeError(
-                f"Gemini structured request failed: {e}"
-            ) from e

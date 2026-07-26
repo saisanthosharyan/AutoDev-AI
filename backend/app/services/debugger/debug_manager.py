@@ -4,34 +4,32 @@ from app.services.debugger.error_analyzer import ErrorAnalyzer
 
 class DebugManager:
     """
-    Builds a structured debugging report from execution results.
+    Converts execution results into a structured debugging report.
 
-    Output format:
-    {
-        "error": str,
-        "root_cause": str,
-        "solution": str,
-        "category": str,
-        "summary": str,
-        "recommendation": str,
-        "stdout": str,
-        "stderr": str,
-        "return_code": int,
-    }
+    The report is passed to the FixerAgent so the LLM can understand
+    what failed and repair the generated project.
     """
 
     def __init__(self):
+
         self.error_analyzer = ErrorAnalyzer()
 
-    def analyze(self, execution_result: dict | None) -> dict:
+    # ==========================================================
+    # ANALYZE
+    # ==========================================================
+
+    def analyze(
+        self,
+        execution_result: dict | None,
+    ) -> dict:
 
         logger.info("=" * 60)
         logger.info("Debug Manager Started")
         logger.info("=" * 60)
 
-        # --------------------------------------------------
+        # ======================================================
         # No execution result
-        # --------------------------------------------------
+        # ======================================================
 
         if execution_result is None:
 
@@ -41,37 +39,43 @@ class DebugManager:
 
             report = {
                 "error": "Execution never started.",
+
                 "root_cause": (
-                    "The project execution process did not produce "
+                    "The execution system did not return "
                     "an execution result."
                 ),
+
                 "solution": (
-                    "Check the project structure, entry point, "
-                    "executor configuration, and build process."
+                    "Verify project generation, project structure, "
+                    "entry point, and executor configuration."
                 ),
-                "category": "execution",
-                "summary": "Execution never started.",
+
+                "category": "ExecutionError",
+
+                "summary": (
+                    "Execution never started."
+                ),
+
                 "recommendation": (
                     "Verify project structure and executor configuration."
                 ),
+
                 "stdout": "",
-                "stderr": "Execution never started.",
+
+                "stderr": (
+                    "Execution never started."
+                ),
+
                 "return_code": -1,
             }
 
-            logger.info(
-                "Debug report generated."
-            )
-
-            logger.info("=" * 60)
-            logger.info("Debug Manager Finished")
-            logger.info("=" * 60)
+            self._finish_log()
 
             return report
 
-        # --------------------------------------------------
+        # ======================================================
         # Successful execution
-        # --------------------------------------------------
+        # ======================================================
 
         if execution_result.get("success"):
 
@@ -79,7 +83,7 @@ class DebugManager:
                 "Project executed successfully."
             )
 
-            return {
+            report = {
                 "error": "",
                 "root_cause": "",
                 "solution": "",
@@ -100,9 +104,13 @@ class DebugManager:
                 ),
             }
 
-        # --------------------------------------------------
-        # Analyze failed execution
-        # --------------------------------------------------
+            self._finish_log()
+
+            return report
+
+        # ======================================================
+        # Error analysis
+        # ======================================================
 
         try:
 
@@ -113,69 +121,83 @@ class DebugManager:
         except Exception as e:
 
             logger.exception(
-                "Error analyzer failed."
+                "Error Analyzer crashed."
             )
 
-            fallback = {
-                "error": execution_result.get(
-                    "stderr",
-                    "Unknown execution error.",
-                ),
+            stderr = execution_result.get(
+                "stderr",
+                "",
+            )
+
+            report = {
+                "error": stderr or str(e),
+
                 "root_cause": (
                     "The error analyzer could not determine "
-                    "the root cause."
+                    "the exact root cause."
                 ),
+
                 "solution": (
-                    "Inspect the execution stderr and return code "
-                    "and repair the failing project."
+                    "Inspect the execution logs and repair "
+                    "the failing project."
                 ),
-                "category": "unknown",
+
+                "category": "UnknownError",
+
                 "summary": "Execution failed.",
+
                 "recommendation": (
                     "Inspect stdout, stderr, and return code."
                 ),
+
                 "stdout": execution_result.get(
                     "stdout",
                     "",
                 ),
-                "stderr": execution_result.get(
-                    "stderr",
-                    str(e),
-                ),
+
+                "stderr": stderr or str(e),
+
                 "return_code": execution_result.get(
                     "return_code",
                     -1,
                 ),
             }
 
-            logger.info(
-                "Fallback debug report generated."
-            )
+            self._finish_log()
 
-            return fallback
+            return report
 
-        # --------------------------------------------------
-        # Safely extract analyzer values
-        # --------------------------------------------------
+        # ======================================================
+        # Extract analyzer data
+        # ======================================================
 
         stdout = analysis.get(
             "stdout",
-            execution_result.get("stdout", ""),
+            execution_result.get(
+                "stdout",
+                "",
+            ),
         )
 
         stderr = analysis.get(
             "stderr",
-            execution_result.get("stderr", ""),
+            execution_result.get(
+                "stderr",
+                "",
+            ),
         )
 
         return_code = analysis.get(
             "return_code",
-            execution_result.get("return_code", -1),
+            execution_result.get(
+                "return_code",
+                -1,
+            ),
         )
 
         category = analysis.get(
             "category",
-            "unknown",
+            "UnknownError",
         )
 
         summary = analysis.get(
@@ -185,31 +207,54 @@ class DebugManager:
 
         recommendation = analysis.get(
             "recommendation",
-            "Inspect the execution error and repair the project.",
+            (
+                "Inspect the execution error and "
+                "repair the project."
+            ),
         )
 
-        # --------------------------------------------------
-        # Create structured debug report
-        # --------------------------------------------------
+        # ======================================================
+        # Structured report
+        # ======================================================
 
         report = {
             "error": stderr or summary,
+
             "root_cause": summary,
+
             "solution": recommendation,
+
             "category": category,
+
             "summary": summary,
+
             "recommendation": recommendation,
+
             "stdout": stdout,
+
             "stderr": stderr,
+
             "return_code": return_code,
         }
 
         logger.info(
-            "Debug report generated."
+            f"Debug category: {category}"
         )
+
+        logger.info(
+            "Debug report generated successfully."
+        )
+
+        self._finish_log()
+
+        return report
+
+    # ==========================================================
+    # LOGGING
+    # ==========================================================
+
+    def _finish_log(self):
 
         logger.info("=" * 60)
         logger.info("Debug Manager Finished")
         logger.info("=" * 60)
-
-        return report

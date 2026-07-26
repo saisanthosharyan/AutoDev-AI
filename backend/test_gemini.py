@@ -1,15 +1,18 @@
 from google import genai
+from app.core.config import settings
 
-client = genai.Client(api_key="YOUR_GEMINI_API_KEY")
 
-response = client.models.generate_content(
-    model="gemini-2.5-flash",
-    contents="Say hello in one sentence."
+print("Model:", settings.GEMINI_MODEL)
+print("Key prefix:", settings.GEMINI_API_KEY[:10])
+
+client = genai.Client(
+    api_key=settings.GEMINI_API_KEY
 )
 
-print("=" * 50)
-print(response)
-print("=" * 50)
+response = client.models.generate_content(
+    model=settings.GEMINI_MODEL,
+    contents="Reply with exactly: Gemini API is working."
+)
 
-print("TEXT:")
+print("\nSUCCESS!")
 print(response.text)
