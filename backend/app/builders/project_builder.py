@@ -1,33 +1,46 @@
 import re
 import shutil
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 from app.core.logger import logger
 
 
 class ProjectBuilder:
     """
-    Builds and rebuilds generated projects from LLM output.
+    Converts LLM-generated FILE: output into a real project.
 
-    Expected LLM format:
+    Expected LLM output:
 
-    FILE: package.json
+    FILE: app.py
 
-    {
-        ...
-    }
+    print("Hello")
 
-    FILE: src/server.js
+    FILE: requirements.txt
 
-    ...
+    requests
+
+    FILE: README.md
+
+    # My Project
     """
+
+    # ==========================================================
+    # INITIALIZATION
+    # ==========================================================
 
     def __init__(self):
 
-        root_dir = Path(
-            __file__
-        ).resolve().parents[3]
+        # ProjectBuilder is located at:
+        #
+        # backend/app/services/project_builder.py
+        #
+        # parents[0] = services
+        # parents[1] = app
+        # parents[2] = backend
+        # parents[3] = AutoDev-AI
+        #
+        root_dir = Path(__file__).resolve().parents[3]
 
         self.output_dir = (
             root_dir / "generated_projects"
@@ -38,8 +51,13 @@ class ProjectBuilder:
             exist_ok=True,
         )
 
+        logger.info(
+            f"ProjectBuilder initialized. "
+            f"Output directory: {self.output_dir}"
+        )
+
     # ==========================================================
-    # BUILD
+    # BUILD NEW PROJECT
     # ==========================================================
 
     def build(
@@ -48,17 +66,22 @@ class ProjectBuilder:
         llm_output: str,
         project_path: str | None = None,
     ) -> dict:
+        """
+        Build a new project from LLM output.
+
+        If project_path is not supplied, a timestamped project
+        directory will be created inside generated_projects.
+        """
 
         safe_name = self._safe_name(
             project_name
         )
 
         if not safe_name:
-
             safe_name = "generated_project"
 
         # ------------------------------------------------------
-        # New project
+        # Determine project path
         # ------------------------------------------------------
 
         if project_path is None:
@@ -78,14 +101,23 @@ class ProjectBuilder:
                 project_path
             ).resolve()
 
+        # ------------------------------------------------------
+        # Prevent accidental building outside output directory
+        # when automatic project path is used.
+        # ------------------------------------------------------
+
         project_path.mkdir(
             parents=True,
             exist_ok=True,
         )
 
         logger.info(
-            f"Building project at: {project_path}"
+            f"Building new project at: {project_path}"
         )
+
+        # ------------------------------------------------------
+        # Write generated files
+        # ------------------------------------------------------
 
         created_files = self._write_files(
             project_path,
@@ -95,34 +127,35 @@ class ProjectBuilder:
         if not created_files:
 
             raise ValueError(
-                "No files were created."
+                "No files were created from LLM output."
             )
+
+        # ------------------------------------------------------
+        # Create ZIP
+        # ------------------------------------------------------
 
         zip_path = self.create_zip(
             project_path
         )
 
         logger.info(
-            f"Project built successfully with "
-            f"{len(created_files)} files."
+            f"Project built successfully. "
+            f"Files created: {len(created_files)}"
         )
 
         return {
             "project_path": str(
                 project_path
             ),
-
             "zip_path": zip_path,
-
             "files": created_files,
-
             "file_count": len(
                 created_files
             ),
         }
 
     # ==========================================================
-    # REBUILD
+    # REBUILD / REPAIR EXISTING PROJECT
     # ==========================================================
 
     def rebuild(
@@ -130,10 +163,45 @@ class ProjectBuilder:
         project_path: str,
         llm_output: str,
     ) -> dict:
+        """
+        Update an existing project using LLM output.
+
+        IMPORTANT:
+
+        This does NOT delete the existing project.
+
+        Only files returned by the LLM are created or replaced.
+
+        Example:
+
+        Existing project:
+
+            app.py
+            config.py
+            README.md
+            requirements.txt
+
+        LLM returns:
+
+            FILE: app.py
+
+            fixed code...
+
+        Result:
+
+            app.py          -> replaced
+            config.py       -> preserved
+            README.md       -> preserved
+            requirements.txt -> preserved
+        """
 
         project = Path(
             project_path
         ).resolve()
+
+        # ------------------------------------------------------
+        # Validate project
+        # ------------------------------------------------------
 
         if not project.exists():
 
@@ -141,124 +209,56 @@ class ProjectBuilder:
                 f"Project does not exist: {project}"
             )
 
+        if not project.is_dir():
+
+            raise NotADirectoryError(
+                f"Project path is not a directory: {project}"
+            )
+
         logger.info(
-            f"Rebuilding project: {project}"
+            f"Rebuilding existing project: {project}"
         )
 
         # ------------------------------------------------------
-        # Build repaired project in temporary directory first.
+        # Write updated files directly into project.
         #
-        # This prevents a bad LLM response from destroying
-        # the currently working project.
+        # We intentionally DO NOT delete the project.
         # ------------------------------------------------------
 
-        temp_project = project.parent / (
-            f".{project.name}_repairing"
+        updated_files = self._write_files(
+            project,
+            llm_output,
         )
 
-        if temp_project.exists():
+        if not updated_files:
 
-            shutil.rmtree(
-                temp_project
+            raise ValueError(
+                "AI repair produced no valid files."
             )
 
-        temp_project.mkdir(
-            parents=True,
-            exist_ok=True,
+        # ------------------------------------------------------
+        # Create updated ZIP
+        # ------------------------------------------------------
+
+        zip_path = self.create_zip(
+            project
         )
 
-        try:
+        logger.info(
+            f"Project rebuilt successfully. "
+            f"Updated files: {len(updated_files)}"
+        )
 
-            updated_files = self._write_files(
-                temp_project,
-                llm_output,
-            )
-
-            if not updated_files:
-
-                raise ValueError(
-                    "AI repair produced no files."
-                )
-
-            # --------------------------------------------------
-            # Create archive before replacing project
-            # --------------------------------------------------
-
-            self.create_zip(
-                temp_project
-            )
-
-            # --------------------------------------------------
-            # Remove old project
-            # --------------------------------------------------
-
-            shutil.rmtree(
+        return {
+            "project_path": str(
                 project
-            )
-
-            # --------------------------------------------------
-            # Rename repaired project
-            # --------------------------------------------------
-
-            temp_project.rename(
-                project
-            )
-
-            zip_path = self.create_zip(
-                project
-            )
-
-            logger.info(
-                "Project rebuilt successfully."
-            )
-
-            return {
-                "project_path": str(
-                    project
-                ),
-
-                "zip_path": zip_path,
-
-                "files": [
-                    str(
-                        project / Path(file).relative_to(
-                            temp_project
-                        )
-                    )
-                    for file in updated_files
-                ],
-
-                "file_count": len(
-                    updated_files
-                ),
-            }
-
-        except Exception:
-
-            logger.exception(
-                "Project rebuild failed."
-            )
-
-            # --------------------------------------------------
-            # Remove failed temporary build
-            # --------------------------------------------------
-
-            if temp_project.exists():
-
-                try:
-
-                    shutil.rmtree(
-                        temp_project
-                    )
-
-                except Exception:
-
-                    logger.exception(
-                        "Failed to remove temporary "
-                        "repair directory."
-                    )
-
-            raise
+            ),
+            "zip_path": zip_path,
+            "files": updated_files,
+            "file_count": len(
+                updated_files
+            ),
+        }
 
     # ==========================================================
     # WRITE FILES
@@ -269,6 +269,10 @@ class ProjectBuilder:
         project_path: Path,
         llm_output: str,
     ) -> list[str]:
+        """
+        Parse FILE: sections from LLM output and write them
+        safely into project_path.
+        """
 
         if not llm_output:
 
@@ -276,12 +280,22 @@ class ProjectBuilder:
                 "LLM output is empty."
             )
 
+        # ------------------------------------------------------
+        # Clean output
+        # ------------------------------------------------------
+
         llm_output = self._clean_output(
             llm_output
         )
 
+        if not llm_output:
+
+            raise ValueError(
+                "LLM output became empty after cleaning."
+            )
+
         # ------------------------------------------------------
-        # FILE parser
+        # Parse FILE sections
         # ------------------------------------------------------
 
         pattern = (
@@ -293,7 +307,7 @@ class ProjectBuilder:
         matches = re.findall(
             pattern,
             llm_output,
-            flags=re.MULTILINE,
+            flags=re.MULTILINE | re.IGNORECASE,
         )
 
         if not matches:
@@ -303,12 +317,26 @@ class ProjectBuilder:
             )
 
             raise ValueError(
-                "LLM returned no project files."
+                "LLM returned no project files. "
+                "Expected format: FILE: path/to/file"
             )
 
-        created = []
+        # ------------------------------------------------------
+        # Project root
+        # ------------------------------------------------------
 
-        seen = set()
+        project_root = (
+            project_path.resolve()
+        )
+
+        project_root.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        # ------------------------------------------------------
+        # Files that should never be generated
+        # ------------------------------------------------------
 
         ignored = {
             ".git",
@@ -318,14 +346,22 @@ class ProjectBuilder:
             "__pycache__",
             ".pytest_cache",
             ".mypy_cache",
+            ".ruff_cache",
+            ".coverage",
             ".DS_Store",
             "__MACOSX",
             "node_modules",
+            ".venv",
+            "venv",
         }
 
-        project_root = (
-            project_path.resolve()
-        )
+        created: list[str] = []
+
+        seen: set[str] = set()
+
+        # ------------------------------------------------------
+        # Process every FILE section
+        # ------------------------------------------------------
 
         for raw_file_path, content in matches:
 
@@ -339,15 +375,18 @@ class ProjectBuilder:
                 .replace("\\", "/")
             )
 
+            # Remove repeated /
             file_path = re.sub(
                 r"/+",
                 "/",
                 file_path,
             )
 
-            file_path = file_path.lstrip(
-                "./"
-            )
+            # Remove leading ./ safely
+            while file_path.startswith("./"):
+                file_path = file_path[2:]
+
+            file_path = file_path.strip()
 
             # --------------------------------------------------
             # Validate path
@@ -361,9 +400,32 @@ class ProjectBuilder:
 
                 continue
 
+            # Reject absolute Unix path
+            if file_path.startswith("/"):
+
+                raise ValueError(
+                    f"Unsafe absolute file path detected: "
+                    f"{file_path}"
+                )
+
+            # Reject Windows drive paths
+            if re.match(
+                r"^[A-Za-z]:",
+                file_path,
+            ):
+
+                raise ValueError(
+                    f"Unsafe Windows absolute path detected: "
+                    f"{file_path}"
+                )
+
             path_parts = Path(
                 file_path
             ).parts
+
+            # --------------------------------------------------
+            # Reject . and ..
+            # --------------------------------------------------
 
             if any(
                 part in {
@@ -375,11 +437,12 @@ class ProjectBuilder:
             ):
 
                 raise ValueError(
-                    f"Unsafe file path detected: {file_path}"
+                    f"Unsafe file path detected: "
+                    f"{file_path}"
                 )
 
             # --------------------------------------------------
-            # Ignore generated system files
+            # Ignore system directories
             # --------------------------------------------------
 
             first_part = (
@@ -394,13 +457,14 @@ class ProjectBuilder:
             ):
 
                 logger.warning(
-                    f"Ignoring system file: {file_path}"
+                    f"Ignoring system file/directory: "
+                    f"{file_path}"
                 )
 
                 continue
 
             # --------------------------------------------------
-            # Duplicate file
+            # Duplicate file protection
             # --------------------------------------------------
 
             normalized_key = (
@@ -410,7 +474,8 @@ class ProjectBuilder:
             if normalized_key in seen:
 
                 logger.warning(
-                    f"Duplicate file ignored: {file_path}"
+                    f"Duplicate file ignored: "
+                    f"{file_path}"
                 )
 
                 continue
@@ -420,7 +485,7 @@ class ProjectBuilder:
             )
 
             # --------------------------------------------------
-            # Content
+            # Clean content
             # --------------------------------------------------
 
             content = content.strip(
@@ -430,7 +495,8 @@ class ProjectBuilder:
             if not content.strip():
 
                 logger.warning(
-                    f"Skipping empty file: {file_path}"
+                    f"Skipping empty file: "
+                    f"{file_path}"
                 )
 
                 continue
@@ -443,6 +509,10 @@ class ProjectBuilder:
                 project_root
                 / file_path
             ).resolve()
+
+            # --------------------------------------------------
+            # Path traversal protection
+            # --------------------------------------------------
 
             try:
 
@@ -457,13 +527,17 @@ class ProjectBuilder:
                     f"{file_path}"
                 )
 
+            # --------------------------------------------------
+            # Create parent directories
+            # --------------------------------------------------
+
             destination.parent.mkdir(
                 parents=True,
                 exist_ok=True,
             )
 
             # --------------------------------------------------
-            # Write
+            # Write file
             # --------------------------------------------------
 
             try:
@@ -474,28 +548,44 @@ class ProjectBuilder:
                     newline="\n",
                 )
 
-                relative = (
-                    destination.relative_to(
-                        project_root
-                    )
-                )
-
-                logger.info(
-                    f"Created file: {relative}"
-                )
-
-                created.append(
-                    str(relative)
-                )
-
-            except Exception:
+            except Exception as e:
 
                 logger.exception(
                     f"Failed writing file: "
                     f"{file_path}"
                 )
 
-                raise
+                raise RuntimeError(
+                    f"Failed writing file "
+                    f"{file_path}: {e}"
+                ) from e
+
+            # --------------------------------------------------
+            # Relative path
+            # --------------------------------------------------
+
+            relative = (
+                destination.relative_to(
+                    project_root
+                )
+            )
+
+            relative_string = (
+                relative.as_posix()
+            )
+
+            created.append(
+                relative_string
+            )
+
+            logger.info(
+                f"Created/updated file: "
+                f"{relative_string}"
+            )
+
+        # ------------------------------------------------------
+        # Final validation
+        # ------------------------------------------------------
 
         if not created:
 
@@ -513,6 +603,9 @@ class ProjectBuilder:
         self,
         project_path: Path,
     ) -> str:
+        """
+        Create a ZIP archive beside the project directory.
+        """
 
         project_path = Path(
             project_path
@@ -525,13 +618,37 @@ class ProjectBuilder:
                 f"{project_path}"
             )
 
+        if not project_path.is_dir():
+
+            raise NotADirectoryError(
+                f"Cannot zip non-directory project: "
+                f"{project_path}"
+            )
+
         zip_file = project_path.with_suffix(
             ".zip"
         )
 
+        # ------------------------------------------------------
+        # Remove previous archive
+        # ------------------------------------------------------
+
         if zip_file.exists():
 
-            zip_file.unlink()
+            try:
+
+                zip_file.unlink()
+
+            except Exception as e:
+
+                raise RuntimeError(
+                    f"Unable to remove existing ZIP: "
+                    f"{zip_file}"
+                ) from e
+
+        # ------------------------------------------------------
+        # Create archive
+        # ------------------------------------------------------
 
         archive = shutil.make_archive(
             base_name=str(
@@ -556,11 +673,25 @@ class ProjectBuilder:
     def _clear_project(
         self,
         project_path: Path,
-    ):
+    ) -> None:
+        """
+        Completely remove all files from a project.
+
+        NOTE:
+        This method is intentionally NOT used by rebuild().
+        Rebuild should preserve files that were not modified
+        by the LLM.
+        """
 
         if not project_path.exists():
-
             return
+
+        if not project_path.is_dir():
+
+            raise NotADirectoryError(
+                f"Cannot clear non-directory: "
+                f"{project_path}"
+            )
 
         for item in project_path.iterdir():
 
@@ -579,7 +710,7 @@ class ProjectBuilder:
             except Exception:
 
                 logger.exception(
-                    f"Unable to remove {item}"
+                    f"Unable to remove: {item}"
                 )
 
                 raise
@@ -592,6 +723,18 @@ class ProjectBuilder:
         self,
         text: str,
     ) -> str:
+        """
+        Clean common formatting mistakes produced by LLMs.
+
+        The LLM should return only:
+
+        FILE: path
+
+        content
+
+        But local models can sometimes wrap the response
+        inside markdown code fences.
+        """
 
         if not text:
 
@@ -599,23 +742,36 @@ class ProjectBuilder:
 
         text = text.strip()
 
-        # Remove opening markdown code fences.
+        # ------------------------------------------------------
+        # Remove opening markdown fence
+        # ------------------------------------------------------
+
         text = re.sub(
-            r"^\s*```(?:text|plaintext|python|javascript|"
-            r"typescript|json|bash|shell|java|cpp|c\+\+)?\s*",
+            r"^\s*```(?:text|plaintext|"
+            r"python|javascript|typescript|"
+            r"json|bash|shell|sh|"
+            r"java|cpp|c\+\+|c|"
+            r"html|css|yaml|yml|"
+            r"markdown|md)?\s*",
             "",
             text,
             flags=re.IGNORECASE,
         )
 
-        # Remove ending fence.
+        # ------------------------------------------------------
+        # Remove closing markdown fence
+        # ------------------------------------------------------
+
         text = re.sub(
             r"\s*```\s*$",
             "",
             text,
         )
 
-        # Remove remaining standalone fences.
+        # ------------------------------------------------------
+        # Remove remaining fences
+        # ------------------------------------------------------
+
         text = text.replace(
             "```",
             "",
@@ -631,6 +787,13 @@ class ProjectBuilder:
         self,
         name: str,
     ) -> str:
+        """
+        Convert project name into a safe directory name.
+
+        Example:
+
+        "My React App!" -> "my_react_app"
+        """
 
         if not name:
 
@@ -639,7 +802,7 @@ class ProjectBuilder:
         safe = re.sub(
             r"[^a-zA-Z0-9_-]",
             "_",
-            name,
+            str(name),
         )
 
         safe = re.sub(
@@ -648,6 +811,12 @@ class ProjectBuilder:
             safe,
         )
 
-        return safe.strip(
+        safe = safe.strip(
             "_"
-        ).lower()
+        )
+
+        if not safe:
+
+            return "generated_project"
+
+        return safe.lower()

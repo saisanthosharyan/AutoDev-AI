@@ -13,7 +13,6 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "AutoDev AI"
     PROJECT_VERSION: str = "0.1.0"
 
-    # Set True only during development
     DEBUG: bool = False
 
     HOST: str = "0.0.0.0"
@@ -23,10 +22,14 @@ class Settings(BaseSettings):
     # LLM Priority
     # --------------------------------------------------
 
-    # Example:
-    # LLM_PRIORITY=gemini,openai
-    # AutoDev will try Gemini first, then OpenAI.
-    LLM_PRIORITY: str = "gemini,openai"
+    LLM_PRIORITY: str = "ollama,gemini,openai"
+
+    # --------------------------------------------------
+    # Ollama
+    # --------------------------------------------------
+
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_MODEL: str = "qwen2.5-coder:7b"
 
     # --------------------------------------------------
     # OpenAI
@@ -74,7 +77,7 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     # --------------------------------------------------
-    # Environment Configuration
+    # Environment
     # --------------------------------------------------
 
     model_config = SettingsConfigDict(
