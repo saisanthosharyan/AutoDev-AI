@@ -1,5 +1,3 @@
-import asyncio
-
 from app.agents.fixer import FixerAgent
 from app.builders.project_builder import ProjectBuilder
 from app.core.logger import logger
@@ -27,24 +25,23 @@ class RetryManager:
         Execute Again
            ↓
         Success / Retry
+
+    The retry manager does NOT create separate test projects.
+    It works on the existing generated project.
     """
 
     def __init__(
         self,
         max_retries: int = 3,
     ):
-
         self.max_retries = max(
             1,
             max_retries,
         )
 
         self.executor = ExecutionManager()
-
         self.debugger = DebugManager()
-
         self.builder = ProjectBuilder()
-
         self.fixer = FixerAgent()
 
     # ==========================================================
@@ -55,9 +52,12 @@ class RetryManager:
         self,
         project: dict,
         code: str,
-        review: str = "",
+        review=None,
     ):
         """
+        Execute a generated project and automatically repair it
+        when execution fails.
+
         Returns:
 
             execution_result
@@ -66,33 +66,38 @@ class RetryManager:
             debug_report
         """
 
-        if not project:
+        # ------------------------------------------------------
+        # Validate input
+        # ------------------------------------------------------
 
+        if not project:
             raise ValueError(
                 "Project information cannot be empty."
             )
 
-        if not project.get(
+        project_path = project.get(
             "project_path"
-        ):
+        )
 
+        if not project_path:
             raise ValueError(
                 "Project path is missing."
             )
 
         if not code or not code.strip():
-
             raise ValueError(
                 "Generated project code cannot be empty."
             )
 
-        execution_result = None
-
-        debug_report = {}
+        # ------------------------------------------------------
+        # Current state
+        # ------------------------------------------------------
 
         current_project = project
-
         current_code = code
+
+        execution_result = None
+        debug_report = {}
 
         # ======================================================
         # RETRY LOOP
@@ -102,31 +107,23 @@ class RetryManager:
             1,
             self.max_retries + 1,
         ):
-
             logger.info("=" * 60)
-
             logger.info(
                 f"Execution Attempt "
                 f"{attempt}/{self.max_retries}"
             )
-
             logger.info("=" * 60)
 
             # ==================================================
-            # EXECUTE
+            # STEP 1 - EXECUTE
             # ==================================================
 
             try:
-
-                execution_result = (
-                    self.executor.run(
-                        current_project[
-                            "project_path"
-                        ]
-                    )
+                execution_result = self.executor.run(
+                    current_project["project_path"]
                 )
 
-            except Exception as e:
+            except Exception as exc:
 
                 logger.exception(
                     "Execution crashed."
@@ -135,13 +132,32 @@ class RetryManager:
                 execution_result = {
                     "success": False,
                     "stdout": "",
-                    "stderr": str(e),
+                    "stderr": str(exc),
+                    "return_code": -1,
+                    "execution_time": 0,
+                }
+
+            # --------------------------------------------------
+            # Normalize execution result
+            # --------------------------------------------------
+
+            if not isinstance(
+                execution_result,
+                dict,
+            ):
+                execution_result = {
+                    "success": False,
+                    "stdout": "",
+                    "stderr": (
+                        "ExecutionManager returned "
+                        "an invalid result."
+                    ),
                     "return_code": -1,
                     "execution_time": 0,
                 }
 
             # ==================================================
-            # SUCCESS
+            # STEP 2 - SUCCESS
             # ==================================================
 
             if execution_result.get(
@@ -162,7 +178,7 @@ class RetryManager:
                 )
 
             # ==================================================
-            # FAILURE
+            # STEP 3 - EXECUTION FAILED
             # ==================================================
 
             logger.warning(
@@ -174,36 +190,59 @@ class RetryManager:
                 "",
             )
 
-            if stderr:
+            stdout = execution_result.get(
+                "stdout",
+                "",
+            )
 
+            if stderr:
                 logger.error(
-                    stderr
+                    f"STDERR:\n{stderr}"
+                )
+
+            if stdout:
+                logger.info(
+                    f"STDOUT:\n{stdout}"
                 )
 
             # ==================================================
-            # DEBUG
+            # STEP 4 - DEBUG
             # ==================================================
 
             try:
 
-                debug_report = (
-                    self.debugger.analyze(
-                        execution_result
-                    )
+                debug_report = self.debugger.analyze(
+                    execution_result
                 )
+
+                if not isinstance(
+                    debug_report,
+                    dict,
+                ):
+                    debug_report = {
+                        "summary": str(
+                            debug_report
+                        ),
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "return_code": execution_result.get(
+                            "return_code",
+                            -1,
+                        ),
+                    }
 
                 logger.info(
                     "Debug analysis completed."
                 )
 
-            except Exception as e:
+            except Exception as exc:
 
                 logger.exception(
                     "Debug analysis failed."
                 )
 
                 debug_report = {
-                    "error": str(e),
+                    "error": str(exc),
                     "root_cause": (
                         "Debug analysis failed."
                     ),
@@ -217,14 +256,8 @@ class RetryManager:
                     "recommendation": (
                         "Inspect stdout and stderr."
                     ),
-                    "stdout": execution_result.get(
-                        "stdout",
-                        "",
-                    ),
-                    "stderr": execution_result.get(
-                        "stderr",
-                        "",
-                    ),
+                    "stdout": stdout,
+                    "stderr": stderr,
                     "return_code": execution_result.get(
                         "return_code",
                         -1,
@@ -232,28 +265,28 @@ class RetryManager:
                 }
 
             # ==================================================
-            # LAST ATTEMPT
+            # STEP 5 - NO RETRIES LEFT
             # ==================================================
 
             if attempt >= self.max_retries:
 
                 logger.error(
-                    "No repair attempt remaining."
+                    "Maximum retry attempts reached."
                 )
 
                 break
 
             # ==================================================
-            # AI REPAIR
+            # STEP 6 - AI REPAIR
             # ==================================================
 
+            logger.info(
+                "Requesting AI to repair project..."
+            )
+
+            old_code = current_code
+
             try:
-
-                logger.info(
-                    "Requesting AI to repair project..."
-                )
-
-                old_code = current_code
 
                 fixed_code = await self.fixer.run(
                     code=current_code,
@@ -261,139 +294,154 @@ class RetryManager:
                     execution_error=debug_report,
                 )
 
-                # ------------------------------------------------
-                # Validate response
-                # ------------------------------------------------
+            except Exception as exc:
 
-                if not fixed_code:
-
-                    logger.error(
-                        "Fixer returned empty response."
-                    )
-
-                    break
-
-                fixed_code = fixed_code.strip()
-
-                if not fixed_code:
-
-                    logger.error(
-                        "Fixer returned empty code."
-                    )
-
-                    break
-
-                # ------------------------------------------------
-                # Check whether AI actually changed anything
-                # ------------------------------------------------
-
-                if fixed_code == old_code:
-
-                    logger.warning(
-                        "Fixer returned code identical "
-                        "to the previous version."
-                    )
-
-                    break
-
-                logger.info(
-                    f"Old code size: "
-                    f"{len(old_code)} chars"
+                logger.exception(
+                    "Fixer Agent failed."
                 )
 
-                logger.info(
-                    f"New code size: "
-                    f"{len(fixed_code)} chars"
+                debug_report = {
+                    **debug_report,
+                    "repair_error": str(exc),
+                }
+
+                break
+
+            # --------------------------------------------------
+            # Validate fixer response
+            # --------------------------------------------------
+
+            if not fixed_code:
+
+                logger.error(
+                    "Fixer Agent returned empty response."
                 )
 
-                # =================================================
-                # REBUILD
-                # =================================================
+                break
+
+            fixed_code = fixed_code.strip()
+
+            if not fixed_code:
+
+                logger.error(
+                    "Fixer Agent returned empty response."
+                )
+
+                break
+
+            # --------------------------------------------------
+            # Check whether anything changed
+            # --------------------------------------------------
+
+            if fixed_code == old_code:
+
+                logger.warning(
+                    "Fixer Agent returned code identical "
+                    "to the previous version."
+                )
+
+                debug_report = {
+                    **debug_report,
+                    "repair_error": (
+                        "Fixer returned unchanged code."
+                    ),
+                }
+
+                break
+
+            logger.info(
+                f"Old code size: {len(old_code)} characters"
+            )
+
+            logger.info(
+                f"New code size: {len(fixed_code)} characters"
+            )
+
+            # ==================================================
+            # STEP 7 - REBUILD
+            # ==================================================
+
+            try:
 
                 logger.info(
                     "Rebuilding repaired project..."
                 )
 
-                updated_project = (
-                    self.builder.rebuild(
-                        current_project[
-                            "project_path"
-                        ],
-                        fixed_code,
+                updated_project = self.builder.rebuild(
+                    current_project["project_path"],
+                    fixed_code,
+                )
+
+                if not updated_project:
+                    raise RuntimeError(
+                        "ProjectBuilder returned no project."
                     )
-                )
 
-                current_project = (
-                    updated_project
-                )
+                if not updated_project.get(
+                    "project_path"
+                ):
+                    raise RuntimeError(
+                        "Rebuilt project path is missing."
+                    )
 
-                current_code = (
-                    fixed_code
-                )
+                current_project = updated_project
+                current_code = fixed_code
 
                 logger.info(
-                    "Project rebuilt successfully."
+                    "Repaired project rebuilt successfully."
                 )
 
-                # =================================================
-                # SAVE REPAIR REPORT
-                # =================================================
-
-                try:
-
-                    reporter = RepairReporter(
-                        current_project[
-                            "project_path"
-                        ]
-                    )
-
-                    reporter.save(
-                        old_code=old_code,
-                        new_code=fixed_code,
-                        debug_report=debug_report,
-                    )
-
-                    logger.info(
-                        "Repair report saved successfully."
-                    )
-
-                except Exception:
-
-                    logger.exception(
-                        "Failed to save repair report."
-                    )
-
-                # =================================================
-                # Small delay
-                # =================================================
-
-                await asyncio.sleep(
-                    1
-                )
-
-            except Exception as e:
+            except Exception as exc:
 
                 logger.exception(
-                    "Automatic repair failed."
+                    "Project rebuild failed."
                 )
 
                 debug_report = {
-                    **(
-                        debug_report
-                        if isinstance(
-                            debug_report,
-                            dict,
-                        )
-                        else {}
-                    ),
-
-                    "repair_error": str(e),
+                    **debug_report,
+                    "repair_error": str(exc),
                 }
 
                 break
 
+            # ==================================================
+            # STEP 8 - SAVE REPAIR REPORT
+            # ==================================================
+
+            try:
+
+                reporter = RepairReporter(
+                    current_project[
+                        "project_path"
+                    ]
+                )
+
+                reporter.save(
+                    old_code=old_code,
+                    new_code=fixed_code,
+                    debug_report=debug_report,
+                )
+
+                logger.info(
+                    "Repair report saved successfully."
+                )
+
+            except Exception:
+
+                logger.exception(
+                    "Failed to save repair report."
+                )
+
+            # --------------------------------------------------
+            # Next iteration executes repaired project
+            # --------------------------------------------------
+
+            logger.info(
+                "Repaired project will now be executed again."
+            )
+
         # ======================================================
-        # FAILED AFTER RETRIES
+        # FAILED AFTER ALL RETRIES
         # ======================================================
 
         logger.error(

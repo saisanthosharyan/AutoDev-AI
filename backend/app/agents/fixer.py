@@ -1,46 +1,79 @@
 import json
 
-from app.services.llm.router import LLMRouter
 from app.agents.base_agent import BaseAgent
 from app.core.logger import logger
+from app.services.llm.router import LLMRouter
 
 
 class FixerAgent(BaseAgent):
     """
-    AI agent responsible for repairing generated projects
-    after execution failures.
+    AI agent responsible for repairing generated projects.
 
-    The agent receives:
-        - Existing generated project
-        - Code review
-        - Execution/debug report
+    The fixer receives:
+        - Complete current project source
+        - Previous AI review
+        - Execution/debug information
 
-    It returns the COMPLETE corrected project using FILE sections.
+    It must return the COMPLETE repaired project using:
+
+        FILE: relative/path/to/file
+
+    format.
+
+    The complete project is returned because ProjectBuilder.rebuild()
+    rebuilds the project from the returned file set.
     """
 
     async def run(
         self,
         code: str,
-        review: str,
-        execution_error: dict | str = "",
+        review: dict | str | None = None,
+        execution_error: dict | str | None = None,
     ) -> str:
 
-        if not code or not code.strip():
+        # ==========================================================
+        # VALIDATE INPUT
+        # ==========================================================
 
+        if not code or not code.strip():
             raise ValueError(
                 "Generated project code cannot be empty."
             )
 
+        # ==========================================================
+        # LLM
+        # ==========================================================
+
         llm = LLMRouter.get_llm()
 
-        # ------------------------------------------------------
-        # Convert debug report into readable JSON
-        # ------------------------------------------------------
+        # ==========================================================
+        # NORMALIZE REVIEW
+        # ==========================================================
 
-        if isinstance(
-            execution_error,
-            dict,
-        ):
+        if isinstance(review, dict):
+
+            review_text = json.dumps(
+                review,
+                indent=2,
+                ensure_ascii=False,
+            )
+
+        else:
+
+            review_text = str(
+                review or ""
+            )
+
+        if not review_text.strip():
+            review_text = (
+                "No previous code review is available."
+            )
+
+        # ==========================================================
+        # NORMALIZE EXECUTION ERROR
+        # ==========================================================
+
+        if isinstance(execution_error, dict):
 
             execution_error_text = json.dumps(
                 execution_error,
@@ -54,103 +87,155 @@ class FixerAgent(BaseAgent):
                 execution_error or ""
             )
 
+        if not execution_error_text.strip():
+            execution_error_text = (
+                "No execution error information is available."
+            )
+
+        # ==========================================================
+        # PROMPT
+        # ==========================================================
+
         prompt = f"""
-You are a Principal Software Engineer and Software Architect.
+You are AutoDev AI's autonomous software repair engineer.
 
-You are repairing an automatically generated software project.
+You are responsible for repairing an existing generated software
+project after execution, validation, or testing failures.
 
-Your goal is to produce a COMPLETE corrected project that:
+Your job is NOT to redesign the project.
 
-1. Runs successfully.
-2. Fixes the reported execution failure.
-3. Preserves all existing functionality.
-4. Preserves the project architecture where possible.
-5. Does not remove working features.
-6. Does not invent unnecessary functionality.
-7. Contains all required files.
-8. Contains correct dependencies.
-9. Contains correct configuration.
-10. Contains correct imports.
-11. Contains correct entry points.
-12. Uses valid syntax.
-13. Can actually be executed by the appropriate runtime.
+Your job is to identify the actual problem and return a COMPLETE
+corrected version of the project.
 
-==================================================
-CURRENT GENERATED PROJECT
-==================================================
+============================================================
+CURRENT PROJECT
+============================================================
+
+The following is the COMPLETE current project:
 
 {code}
 
-==================================================
-CODE REVIEW
-==================================================
+============================================================
+PREVIOUS CODE REVIEW
+============================================================
 
-{review or "No code review available."}
+{review_text}
 
-==================================================
+============================================================
 EXECUTION / DEBUG REPORT
-==================================================
+============================================================
 
 {execution_error_text}
 
-==================================================
-REPAIR OBJECTIVES
-==================================================
+============================================================
+REPAIR OBJECTIVE
+============================================================
 
-Fix the actual root cause of the execution failure.
+Fix the actual root cause of the failure.
 
-Check all of the following where applicable:
+Preserve all existing working functionality.
 
-- syntax errors
-- runtime errors
-- import errors
-- missing dependencies
-- incorrect dependencies
-- incorrect package versions
-- missing files
-- broken file paths
-- incorrect entry points
-- broken APIs
-- incorrect function calls
-- incorrect configuration
-- environment variable handling
-- database configuration
-- frontend/backend communication
-- Node.js module configuration
-- Python package configuration
-- Java compilation problems
-- C++ compilation problems
-- Docker configuration
-- port configuration
-- file/folder structure
-- duplicate code
-- incomplete files
+Do not remove features merely to make execution succeed.
 
-IMPORTANT:
+Do not replace working implementations with simplified
+placeholder implementations.
 
-Do NOT solve the problem by deleting features.
+Do not redesign the architecture unless the existing architecture
+is directly responsible for the failure.
 
-Do NOT replace a real implementation with placeholder code.
+============================================================
+CHECK THESE AREAS
+============================================================
 
-Do NOT return partial files.
+Check the complete project for:
 
-Do NOT return explanations.
+1. Syntax errors
+2. Runtime errors
+3. Import errors
+4. Missing dependencies
+5. Incorrect dependencies
+6. Incorrect package versions
+7. Missing files
+8. Incorrect file paths
+9. Incorrect entry points
+10. Broken function calls
+11. Incorrect APIs
+12. Incorrect configuration
+13. Environment variable problems
+14. Database configuration problems
+15. Frontend/backend communication problems
+16. Node.js module configuration
+17. Python package configuration
+18. Java compilation problems
+19. C++ compilation problems
+20. Docker configuration
+21. Port configuration
+22. Broken project structure
+23. Incorrect test configuration
+24. Missing executable files
+25. Incorrect imports
+26. Incorrect dependency declarations
 
-Do NOT return analysis.
+============================================================
+IMPORTANT REPAIR RULES
+============================================================
 
-Do NOT return a summary.
+DO:
 
-Do NOT return markdown.
+- Fix the root cause.
+- Preserve working functionality.
+- Preserve the existing architecture where possible.
+- Keep all required files.
+- Keep package.json when the project uses Node.js.
+- Keep requirements.txt when the project uses Python.
+- Keep configuration files when required.
+- Keep source files.
+- Keep tests when they already exist.
+- Correct dependencies when necessary.
+- Correct imports when necessary.
+- Correct entry points when necessary.
+- Make the project executable.
+- Make the project internally consistent.
 
-Do NOT use code fences.
+DO NOT:
 
-==================================================
-STRICT OUTPUT FORMAT
-==================================================
+- Delete features to hide errors.
+- Delete tests to make testing pass.
+- Delete dependencies without checking usage.
+- Replace the entire project with a trivial example.
+- Generate TODO.
+- Generate FIXME.
+- Generate placeholder implementations.
+- Generate pseudocode.
+- Generate incomplete files.
+- Return only changed files.
+- Return explanations.
+- Return analysis.
+- Return summaries.
+- Return markdown.
+- Return code fences.
+
+============================================================
+CRITICAL REQUIREMENT
+============================================================
+
+YOU MUST RETURN THE COMPLETE PROJECT.
+
+Even if only one file needs modification, return every project
+file required for the project to work.
+
+The ProjectBuilder will rebuild the project from your response.
+
+Therefore, omitting an existing required file can destroy the
+working project.
+
+============================================================
+OUTPUT FORMAT
+============================================================
 
 Return ONLY project files.
 
-Every file MUST start exactly with:
+Every file must start exactly with:
 
 FILE: relative/path/to/file
 
@@ -162,35 +247,82 @@ FILE: package.json
   "name": "example"
 }}
 
-FILE: src/server.js
+FILE: src/main.py
 
-const express = require("express");
+print("Hello")
 
-...
+FILE: README.md
 
-Rules:
+# Example
 
-- Use relative file paths only.
-- Never use absolute paths.
-- Include every required project file.
-- Include unchanged files if they are part of the project.
-- Do not omit package.json.
-- Do not omit requirements.txt when required.
-- Do not omit configuration files when required.
-- Do not omit source files.
-- Do not add explanations before or after the files.
-- Do not use ```.
+============================================================
+STRICT OUTPUT RULES
+============================================================
 
-Return the COMPLETE corrected project.
+1. Start immediately with FILE:
+2. Use relative paths only.
+3. Never use absolute Windows paths.
+4. Never use markdown code fences.
+5. Never add explanations.
+6. Never add analysis.
+7. Never add a summary.
+8. Never add text before the first FILE:
+9. Never add text after the final file.
+10. Return the COMPLETE corrected project.
+11. Do not omit unchanged required files.
+12. Do not create unnecessary files.
+13. Do not create unnecessary tests.
+14. Do not remove existing tests.
+15. Do not remove working features.
+16. Ensure every import refers to an existing file/package.
+17. Ensure every dependency is declared.
+18. Ensure the project has a valid entry point.
+19. Ensure the generated project can actually run.
+
+============================================================
+FINAL VALIDATION BEFORE RESPONSE
+============================================================
+
+Before returning the project, internally verify:
+
+- Every FILE path is valid.
+- Every required file is included.
+- Imports match the files provided.
+- Dependencies match imports.
+- Entry point exists.
+- Configuration is consistent.
+- No syntax errors are introduced.
+- The reported execution problem is actually fixed.
+- Existing functionality is preserved.
+
+Return ONLY the complete corrected project.
 """
+
+        # ==========================================================
+        # GENERATE REPAIR
+        # ==========================================================
 
         logger.info(
             "Starting AI project repair..."
         )
 
-        response = await llm.generate(
-            prompt
-        )
+        try:
+
+            response = await llm.generate(
+                prompt
+            )
+
+        except Exception:
+
+            logger.exception(
+                "LLM project repair request failed."
+            )
+
+            raise
+
+        # ==========================================================
+        # VALIDATE RESPONSE
+        # ==========================================================
 
         if response is None:
 
@@ -206,8 +338,42 @@ Return the COMPLETE corrected project.
                 "Fixer LLM returned an empty response."
             )
 
+        # ==========================================================
+        # BASIC FORMAT VALIDATION
+        # ==========================================================
+
+        if not response.lstrip().startswith(
+            "FILE:"
+        ):
+
+            logger.error(
+                "Fixer returned invalid project format."
+            )
+
+            raise RuntimeError(
+                "Fixer response does not start with FILE:."
+            )
+
+        if "FILE:" not in response:
+
+            raise RuntimeError(
+                "Fixer response contains no project files."
+            )
+
+        # ==========================================================
+        # LOG
+        # ==========================================================
+
+        file_count = response.count(
+            "\nFILE:"
+        )
+
+        if response.startswith("FILE:"):
+            file_count += 1
+
         logger.info(
-            "AI project repair completed."
+            f"AI project repair completed. "
+            f"Generated approximately {file_count} files."
         )
 
         return response

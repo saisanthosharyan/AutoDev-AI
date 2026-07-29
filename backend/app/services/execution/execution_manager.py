@@ -1,6 +1,8 @@
-from pathlib import Path
+from __future__ import annotations
+
 import shutil
 import time
+from pathlib import Path
 
 from app.core.logger import logger
 
@@ -16,13 +18,6 @@ class ExecutionManager:
     """
     Detects the generated project type and executes it
     using the appropriate executor.
-
-    Supported:
-        - Python
-        - Node.js
-        - Java
-        - C++
-        - Docker
     """
 
     def __init__(self):
@@ -36,12 +31,17 @@ class ExecutionManager:
         }
 
     # ==========================================================
-    # PROJECT TYPE DETECTION
+    # DETECT PROJECT TYPE
     # ==========================================================
 
-    def detect_project_type(self, project_path: str) -> str:
+    def detect_project_type(
+        self,
+        project_path: str,
+    ) -> str:
 
-        project = Path(project_path).resolve()
+        project = Path(
+            project_path
+        ).resolve()
 
         if not project.exists():
             raise FileNotFoundError(
@@ -57,95 +57,61 @@ class ExecutionManager:
             f"Detecting project type: {project}"
         )
 
-        # ------------------------------------------------------
-        # Docker should be checked FIRST.
-        # ------------------------------------------------------
-
+        # Docker
         dockerfile = project / "Dockerfile"
 
         if dockerfile.exists():
+
             if shutil.which("docker"):
+
                 logger.info(
-                    "Dockerfile detected and Docker is available."
+                    "Docker project detected."
                 )
+
                 return "docker"
 
             logger.warning(
-                "Dockerfile detected but Docker is unavailable."
+                "Dockerfile detected, but Docker "
+                "is unavailable."
             )
 
-        # ------------------------------------------------------
-        # Node.js
-        # ------------------------------------------------------
-
-        if (project / "package.json").exists():
-
-            logger.info(
-                "Detected Node.js project."
-            )
+        # Node
+        if (
+            project / "package.json"
+        ).exists():
 
             return "node"
 
-        # ------------------------------------------------------
         # Python
-        # ------------------------------------------------------
-
-        if (
-            (project / "requirements.txt").exists()
-            or (project / "pyproject.toml").exists()
-            or (project / "setup.py").exists()
-            or any(project.rglob("*.py"))
+        if self._contains_python(
+            project
         ):
-
-            logger.info(
-                "Detected Python project."
-            )
-
             return "python"
 
-        # ------------------------------------------------------
         # Java
-        # ------------------------------------------------------
-
-        if any(project.rglob("*.java")):
-
-            logger.info(
-                "Detected Java project."
-            )
-
+        if any(
+            project.rglob("*.java")
+        ):
             return "java"
 
-        # ------------------------------------------------------
         # C++
-        # ------------------------------------------------------
-
         if (
             any(project.rglob("*.cpp"))
             or any(project.rglob("*.cc"))
             or any(project.rglob("*.cxx"))
         ):
-
-            logger.info(
-                "Detected C++ project."
-            )
-
             return "cpp"
-
-        logger.warning(
-            "Unable to determine project type."
-        )
 
         return "unknown"
 
     # ==========================================================
-    # EXECUTE
+    # RUN
     # ==========================================================
 
-    def run(self, project_path: str) -> dict:
-
-        logger.info("=" * 60)
-        logger.info("Execution Manager Started")
-        logger.info("=" * 60)
+    def run(
+        self,
+        project_path: str,
+    ) -> dict:
 
         start_time = time.time()
 
@@ -158,26 +124,27 @@ class ExecutionManager:
             "project_type": "unknown",
         }
 
+        logger.info("=" * 60)
+        logger.info("Execution Manager Started")
+        logger.info("=" * 60)
+
         try:
 
-            # --------------------------------------------------
-            # Detect project
-            # --------------------------------------------------
-
-            project_type = self.detect_project_type(
-                project_path
+            project_type = (
+                self.detect_project_type(
+                    project_path
+                )
             )
 
-            result["project_type"] = project_type
+            result["project_type"] = (
+                project_type
+            )
 
             if project_type == "unknown":
 
                 result["stderr"] = (
-                    "Unable to detect generated project type."
-                )
-
-                logger.error(
-                    result["stderr"]
+                    "Unable to detect generated "
+                    "project type."
                 )
 
                 return result
@@ -193,19 +160,11 @@ class ExecutionManager:
                     f"project type: {project_type}"
                 )
 
-                logger.error(
-                    result["stderr"]
-                )
-
                 return result
 
             logger.info(
                 f"Using executor: {project_type}"
             )
-
-            # --------------------------------------------------
-            # Execute project
-            # --------------------------------------------------
 
             execution_result = executor.run(
                 project_path
@@ -217,42 +176,38 @@ class ExecutionManager:
                     "success": False,
                     "stdout": "",
                     "stderr": (
-                        "Executor returned no result."
+                        "Executor returned None."
                     ),
                     "return_code": -1,
                 }
 
-            # --------------------------------------------------
             # Docker fallback
-            # --------------------------------------------------
-
             if (
                 project_type == "docker"
-                and execution_result.get("skip", False)
+                and execution_result.get(
+                    "skip",
+                    False,
+                )
             ):
 
-                logger.warning(
-                    "Docker execution skipped."
-                )
-
-                logger.info(
-                    "Attempting fallback project detection."
-                )
-
-                fallback_type = self._detect_non_docker_type(
-                    project_path
+                fallback_type = (
+                    self._detect_non_docker_type(
+                        project_path
+                    )
                 )
 
                 if fallback_type:
 
-                    fallback_executor = self.executors.get(
-                        fallback_type
+                    fallback_executor = (
+                        self.executors.get(
+                            fallback_type
+                        )
                     )
 
                     if fallback_executor:
 
                         logger.info(
-                            f"Using fallback executor: "
+                            f"Docker fallback: "
                             f"{fallback_type}"
                         )
 
@@ -262,54 +217,56 @@ class ExecutionManager:
                             )
                         )
 
-                        result["project_type"] = (
-                            fallback_type
+                        result[
+                            "project_type"
+                        ] = fallback_type
+
+            result.update(
+                {
+                    "success": bool(
+                        execution_result.get(
+                            "success",
+                            False,
                         )
-
-            # --------------------------------------------------
-            # Normalize result
-            # --------------------------------------------------
-
-            result.update({
-                "success": bool(
-                    execution_result.get(
-                        "success",
-                        False,
-                    )
-                ),
-                "stdout": (
-                    execution_result.get(
-                        "stdout",
-                        "",
-                    )
-                    or ""
-                ),
-                "stderr": (
-                    execution_result.get(
-                        "stderr",
-                        "",
-                    )
-                    or ""
-                ),
-                "return_code": execution_result.get(
-                    "return_code",
-                    -1,
-                ),
-            })
+                    ),
+                    "stdout": (
+                        execution_result.get(
+                            "stdout",
+                            "",
+                        )
+                        or ""
+                    ),
+                    "stderr": (
+                        execution_result.get(
+                            "stderr",
+                            "",
+                        )
+                        or ""
+                    ),
+                    "return_code": (
+                        execution_result.get(
+                            "return_code",
+                            -1,
+                        )
+                    ),
+                }
+            )
 
             return result
 
-        except Exception as e:
+        except Exception as exc:
 
             logger.exception(
-                "Execution Manager crashed."
+                "Execution Manager failed."
             )
 
-            result.update({
-                "success": False,
-                "stderr": str(e),
-                "return_code": -1,
-            })
+            result.update(
+                {
+                    "success": False,
+                    "stderr": str(exc),
+                    "return_code": -1,
+                }
+            )
 
             return result
 
@@ -320,25 +277,19 @@ class ExecutionManager:
                 2,
             )
 
-            # --------------------------------------------------
-            # Save execution log
-            # --------------------------------------------------
-
             try:
 
                 ExecutionLogger(
                     project_path
-                ).save(result)
+                ).save(
+                    result
+                )
 
             except Exception:
 
                 logger.exception(
                     "Failed to save execution log."
                 )
-
-            # --------------------------------------------------
-            # Logging
-            # --------------------------------------------------
 
             if result["success"]:
 
@@ -352,18 +303,47 @@ class ExecutionManager:
                     "Execution failed."
                 )
 
-                if result.get("stderr"):
-
+                if result["stderr"]:
                     logger.error(
                         result["stderr"]
                     )
 
             logger.info("=" * 60)
-            logger.info("Execution Manager Finished")
+            logger.info(
+                "Execution Manager Finished"
+            )
             logger.info("=" * 60)
 
     # ==========================================================
-    # FALLBACK DETECTION
+    # PYTHON DETECTION
+    # ==========================================================
+
+    def _contains_python(
+        self,
+        project: Path,
+    ) -> bool:
+
+        if (
+            project / "requirements.txt"
+        ).exists():
+            return True
+
+        if (
+            project / "pyproject.toml"
+        ).exists():
+            return True
+
+        if (
+            project / "setup.py"
+        ).exists():
+            return True
+
+        return any(
+            project.rglob("*.py")
+        )
+
+    # ==========================================================
+    # DOCKER FALLBACK
     # ==========================================================
 
     def _detect_non_docker_type(
@@ -375,33 +355,26 @@ class ExecutionManager:
             project_path
         ).resolve()
 
-        # Node first
-        if (project / "package.json").exists():
-
+        if (
+            project / "package.json"
+        ).exists():
             return "node"
 
-        # Python
-        if (
-            (project / "requirements.txt").exists()
-            or (project / "pyproject.toml").exists()
-            or (project / "setup.py").exists()
-            or any(project.rglob("*.py"))
+        if self._contains_python(
+            project
         ):
-
             return "python"
 
-        # Java
-        if any(project.rglob("*.java")):
-
+        if any(
+            project.rglob("*.java")
+        ):
             return "java"
 
-        # C++
         if (
             any(project.rglob("*.cpp"))
             or any(project.rglob("*.cc"))
             or any(project.rglob("*.cxx"))
         ):
-
             return "cpp"
 
         return None

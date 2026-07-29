@@ -1,3 +1,8 @@
+
+from __future__ import annotations
+
+from typing import Any
+
 from app.agents.planner import PlannerAgent
 from app.agents.coder import CoderAgent
 from app.agents.reviewer import ReviewerAgent
@@ -18,9 +23,37 @@ from app.websocket.manager import manager
 
 
 class AgentOrchestrator:
+    """
+    Main autonomous workflow controller for AutoDev AI.
 
-    def __init__(self):
+    Pipeline:
 
+        User Request
+            ↓
+        Planner Agent
+            ↓
+        Coder Agent
+            ↓
+        Project Builder
+            ↓
+        Execution / Retry Manager
+            ↓
+        Project Validation
+            ↓
+        Automated Testing
+            ↓
+        AI Review
+            ↓
+        Self-Healing when required
+            ↓
+        Database Save
+            ↓
+        Final Result
+    """
+
+    TOTAL_STEPS = 9
+
+    def __init__(self) -> None:
         self.planner = PlannerAgent()
         self.coder = CoderAgent()
         self.reviewer = ReviewerAgent()
@@ -31,448 +64,745 @@ class AgentOrchestrator:
         self.retry_manager = RetryManager()
         self.tester = TestManager()
 
+    # ==========================================================
+    # PROGRESS HELPER
+    # ==========================================================
+
+    async def _progress(
+        self,
+        session_id: str | None,
+        step: str,
+        progress: int,
+        message: str,
+    ) -> None:
+        """
+        Send websocket progress safely.
+
+        Failure to update the UI should never crash the
+        AutoDev AI pipeline.
+        """
+
+        if not session_id:
+            return
+
+        try:
+            await manager.send_progress(
+                session_id=session_id,
+                step=step,
+                progress=progress,
+                message=message,
+            )
+
+        except Exception:
+            logger.exception(
+                "Failed to send websocket progress."
+            )
+
+    # ==========================================================
+    # DEFAULT RESULT HELPERS
+    # ==========================================================
+
+    @staticmethod
+    def _failed_test_result(
+        message: str,
+    ) -> dict[str, Any]:
+        return {
+            "success": False,
+            "stdout": "",
+            "stderr": message,
+            "return_code": -1,
+            "execution_time": 0,
+        }
+
+    @staticmethod
+    def _failed_review(
+        error: str,
+    ) -> dict[str, Any]:
+        return {
+            "success": False,
+            "error": error,
+        }
+
+    @staticmethod
+    def _failed_validation(
+        error: str,
+    ) -> dict[str, Any]:
+        return {
+            "valid": False,
+            "errors": [error],
+            "warnings": [],
+        }
+
+    # ==========================================================
+    # MAIN PIPELINE
+    # ==========================================================
+
     async def execute(
         self,
         task: str,
         history: list | None = None,
         session_id: str | None = None,
-    ):
+    ) -> dict[str, Any]:
 
         logger.info("=" * 60)
         logger.info("Starting AutoDev AI Pipeline")
         logger.info("=" * 60)
 
-        # =====================================================
-        # STEP 1 - PLANNING
-        # =====================================================
-
-        logger.info("Step 1/8 - Planning...")
-
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Planning",
-                progress=10,
-                message="Generating implementation plan...",
+        if not task or not task.strip():
+            raise ValueError(
+                "Task cannot be empty."
             )
 
-        plan: Task = await self.planner.run(task, history)
+        plan: Task | None = None
+        code: str = ""
+        project: dict[str, Any] = {}
+
+        execution_result: dict[str, Any] = {}
+        validation: dict[str, Any] = {}
+        test_result: dict[str, Any] = {}
+        review: dict[str, Any] = {}
+        debug_report: dict[str, Any] = {}
+
+        # ======================================================
+        # STEP 1 - PLANNING
+        # ======================================================
+
+        logger.info(
+            "Step 1/9 - Planning..."
+        )
+
+        await self._progress(
+            session_id,
+            "Planning",
+            10,
+            "Generating implementation plan...",
+        )
+
+        try:
+            plan = await self.planner.run(
+                task,
+                history,
+            )
+
+        except Exception:
+            logger.exception(
+                "Planner Agent failed."
+            )
+            raise
 
         if plan is None:
-            raise RuntimeError("Planner failed to generate task.")
-
-        logger.info("Planning completed.")
-
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Planning",
-                progress=20,
-                message="Planning completed.",
+            raise RuntimeError(
+                "Planner failed to generate a task."
             )
 
-        # =====================================================
-        # STEP 2 - GENERATE CODE
-        # =====================================================
+        logger.info(
+            f"Planning completed: {plan.title}"
+        )
 
-        logger.info("Step 2/8 - Generating code...")
+        await self._progress(
+            session_id,
+            "Planning",
+            20,
+            "Planning completed.",
+        )
 
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Coding",
-                progress=25,
-                message="Generating source code...",
+        # ======================================================
+        # STEP 2 - CODING
+        # ======================================================
+
+        logger.info(
+            "Step 2/9 - Generating code..."
+        )
+
+        await self._progress(
+            session_id,
+            "Coding",
+            25,
+            "Generating source code...",
+        )
+
+        try:
+            code = await self.coder.run(
+                plan
             )
 
-        code = await self.coder.run(plan)
+        except Exception:
+            logger.exception(
+                "Coder Agent failed."
+            )
+            raise
 
-        if not code:
-            raise RuntimeError("Coder failed to generate source code.")
-
-        logger.info(f"Generated {len(code)} characters.")
-
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Coding",
-                progress=35,
-                message="Source code generated.",
+        if not code or not code.strip():
+            raise RuntimeError(
+                "Coder failed to generate source code."
             )
 
-        # =====================================================
+        logger.info(
+            f"Generated {len(code)} characters of source code."
+        )
+
+        await self._progress(
+            session_id,
+            "Coding",
+            35,
+            "Source code generated.",
+        )
+
+        # ======================================================
         # STEP 3 - BUILD PROJECT
-        # =====================================================
+        # ======================================================
 
-        logger.info("Step 3/8 - Building project...")
+        logger.info(
+            "Step 3/9 - Building project..."
+        )
 
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Building",
-                progress=40,
-                message="Creating project structure...",
-            )
+        await self._progress(
+            session_id,
+            "Building",
+            40,
+            "Creating project structure...",
+        )
 
         try:
             project = self.builder.build(
-                plan.title,
-                code,
+                project_name=plan.title,
+                llm_output=code,
             )
 
-        except Exception as e:
-            logger.exception("Project Builder failed.")
-            raise RuntimeError(str(e))
+        except Exception:
+            logger.exception(
+                "Project Builder failed."
+            )
+            raise
 
-        if (
-            not project
-            or "project_path" not in project
-            or "zip_path" not in project
-        ):
-            raise RuntimeError("Project Builder returned invalid data.")
+        if not project:
+            raise RuntimeError(
+                "Project Builder returned no result."
+            )
+
+        if not project.get("project_path"):
+            raise RuntimeError(
+                "Project Builder did not return project_path."
+            )
+
+        if not project.get("zip_path"):
+            raise RuntimeError(
+                "Project Builder did not return zip_path."
+            )
 
         logger.info(
-            f"Project created at {project['project_path']}"
+            f"Project created at: "
+            f"{project['project_path']}"
         )
 
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Building",
-                progress=50,
-                message="Project built successfully.",
-            )
-        # =====================================================
-        # STEP 4 - EXECUTE PROJECT
-        # =====================================================
-
-        logger.info("Step 4/9 - Executing project...")
-
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Execution",
-                progress=55,
-                message="Executing generated project...",
-            )
-
-        retry_result = await self.retry_manager.execute_with_retry(
-            project=project,
-            code=code,
+        await self._progress(
+            session_id,
+            "Building",
+            50,
+            "Project built successfully.",
         )
 
-        if retry_result is None:
-            raise RuntimeError(
-                "RetryManager returned no result."
-            )
+        # ======================================================
+        # STEP 4 - EXECUTION
+        # ======================================================
 
-        (
-            execution_result,
-            project,
-            code,
-            debug_report,
-        ) = retry_result
+        logger.info(
+            "Step 4/9 - Executing project..."
+        )
 
-        logger.info("Execution completed.")
-
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Execution",
-                progress=65,
-                message="Execution completed.",
-            )
-
-        # =====================================================
-        # STEP 5 - VALIDATE PROJECT
-        # =====================================================
-
-        logger.info("Step 5/9 - Validating project...")
-
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Validation",
-                progress=70,
-                message="Validating generated project...",
-            )
+        await self._progress(
+            session_id,
+            "Execution",
+            55,
+            "Executing generated project...",
+        )
 
         try:
+            retry_result = (
+                await self.retry_manager.execute_with_retry(
+                    project=project,
+                    code=code,
+                )
+            )
 
+        except Exception:
+            logger.exception(
+                "Project execution failed."
+            )
+
+            execution_result = {
+                "success": False,
+                "stdout": "",
+                "stderr": "Project execution failed.",
+                "return_code": -1,
+            }
+
+            debug_report = {
+                "success": False,
+                "error": "Project execution failed.",
+            }
+
+            retry_result = None
+
+        if retry_result is not None:
+
+            if not isinstance(
+                retry_result,
+                tuple,
+            ) or len(retry_result) != 4:
+
+                raise RuntimeError(
+                    "RetryManager returned invalid result. "
+                    "Expected: "
+                    "(execution_result, project, code, debug_report)"
+                )
+
+            (
+                execution_result,
+                project,
+                code,
+                debug_report,
+            ) = retry_result
+
+            execution_result = (
+                execution_result
+                or {}
+            )
+
+            debug_report = (
+                debug_report
+                or {}
+            )
+
+        logger.info(
+            "Execution stage completed."
+        )
+
+        await self._progress(
+            session_id,
+            "Execution",
+            65,
+            "Execution completed.",
+        )
+
+        # ======================================================
+        # STEP 5 - VALIDATION
+        # ======================================================
+
+        logger.info(
+            "Step 5/9 - Validating project..."
+        )
+
+        await self._progress(
+            session_id,
+            "Validation",
+            70,
+            "Validating generated project...",
+        )
+
+        try:
             validation = self.validator.validate(
                 project["project_path"]
             )
 
-            logger.info("Validation completed.")
-
-        except Exception as e:
-
-            logger.exception("Validation failed.")
-
-            validation = {
-                "valid": False,
-                "errors": [str(e)],
-                "warnings": [],
-            }
-
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Validation",
-                progress=75,
-                message="Validation completed.",
+            validation = (
+                validation
+                or {}
             )
 
-        # =====================================================
-        # STEP 6 - RUN TESTS
-        # =====================================================
-
-        logger.info("Step 6/9 - Running automated tests...")
-
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Testing",
-                progress=80,
-                message="Running automated tests...",
+            logger.info(
+                "Project validation completed."
             )
 
-        if execution_result and execution_result.get("success"):
+        except Exception as exc:
+            logger.exception(
+                "Project validation failed."
+            )
+
+            validation = self._failed_validation(
+                str(exc)
+            )
+
+        await self._progress(
+            session_id,
+            "Validation",
+            75,
+            "Validation completed.",
+        )
+
+        # ======================================================
+        # STEP 6 - AUTOMATED TESTING
+        # ======================================================
+
+        logger.info(
+            "Step 6/9 - Running automated tests..."
+        )
+
+        await self._progress(
+            session_id,
+            "Testing",
+            80,
+            "Running automated tests...",
+        )
+
+        if (
+            execution_result
+            and execution_result.get("success")
+        ):
 
             try:
-
                 test_result = self.tester.run(
                     project["project_path"]
                 )
 
-                logger.info("Testing completed.")
+                test_result = (
+                    test_result
+                    or self._failed_test_result(
+                        "Test manager returned no result."
+                    )
+                )
 
-            except Exception as e:
+                logger.info(
+                    "Automated testing completed."
+                )
 
-                logger.exception("Testing failed.")
+            except Exception as exc:
+                logger.exception(
+                    "Automated testing failed."
+                )
 
-                test_result = {
-                    "success": False,
-                    "stdout": "",
-                    "stderr": str(e),
-                    "return_code": -1,
-                    "execution_time": 0,
-                }
+                test_result = (
+                    self._failed_test_result(
+                        str(exc)
+                    )
+                )
 
         else:
 
             logger.warning(
-                "Skipping tests because execution failed."
+                "Skipping automated tests because "
+                "project execution failed."
             )
 
-            test_result = {
-                "success": False,
-                "stdout": "",
-                "stderr": "Execution failed. Tests skipped.",
-                "return_code": -1,
-                "execution_time": 0,
-            }
-
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Testing",
-                progress=85,
-                message="Testing completed.",
+            test_result = (
+                self._failed_test_result(
+                    "Execution failed. Tests skipped."
+                )
             )
 
-        # =====================================================
+        await self._progress(
+            session_id,
+            "Testing",
+            85,
+            "Testing completed.",
+        )
+
+        # ======================================================
         # STEP 7 - AI REVIEW
-        # =====================================================
+        # ======================================================
 
-        logger.info("Step 7/9 - AI Review...")
+        logger.info(
+            "Step 7/9 - AI Review..."
+        )
 
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Review",
-                progress=90,
-                message="AI is reviewing the project...",
-            )
+        await self._progress(
+            session_id,
+            "Review",
+            90,
+            "AI is reviewing the generated project...",
+        )
 
         try:
 
-            review = await self.reviewer.run(code)
-
-            logger.info("Review completed.")
-
-        except Exception as e:
-
-            logger.exception("Reviewer failed.")
-
-            review = {
-                "success": False,
-                "error": str(e),
-            }
-
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Review",
-                progress=95,
-                message="AI review completed.",
+            # The current ReviewerAgent interface accepts
+            # the generated code string.
+            review = await self.reviewer.run(
+                code
             )
-                # =====================================================
+
+            review = (
+                review
+                or {}
+            )
+
+            logger.info(
+                "AI review completed."
+            )
+
+        except Exception as exc:
+
+            logger.exception(
+                "Reviewer Agent failed."
+            )
+
+            review = self._failed_review(
+                str(exc)
+            )
+
+        await self._progress(
+            session_id,
+            "Review",
+            95,
+            "AI review completed.",
+        )
+
+        # ======================================================
         # STEP 8 - SELF HEALING
-        # =====================================================
+        # ======================================================
 
-        logger.info("Step 8/9 - Self Healing...")
+        logger.info(
+            "Step 8/9 - Self-Healing..."
+        )
 
-        if not (
+        execution_success = bool(
             execution_result
-            and execution_result.get("success")
-            and test_result
-            and test_result.get("success")
-        ):
+            and execution_result.get(
+                "success"
+            )
+        )
+
+        test_success = bool(
+            test_result
+            and test_result.get(
+                "success"
+            )
+        )
+
+        validation_success = bool(
+            validation
+            and validation.get(
+                "valid",
+                False,
+            )
+        )
+
+        needs_repair = not (
+            execution_success
+            and test_success
+            and validation_success
+        )
+
+        if needs_repair:
 
             logger.warning(
-                "Problems detected. Starting self-healing..."
+                "Project quality checks failed. "
+                "Starting self-healing..."
             )
 
-            if session_id:
-                await manager.send_progress(
-                    session_id=session_id,
-                    step="Self-Healing",
-                    progress=96,
-                    message="Repairing project...",
-                )
-
-            retry_result = await self.retry_manager.execute_with_retry(
-                project=project,
-                code=code,
-                review=review,
+            await self._progress(
+                session_id,
+                "Self-Healing",
+                96,
+                "Problems detected. Repairing project...",
             )
 
-            if retry_result is None:
+            try:
 
-                logger.error(
-                    "RetryManager returned no result."
+                repair_result = (
+                    await self.retry_manager.execute_with_retry(
+                        project=project,
+                        code=code,
+                        review=review,
+                    )
                 )
 
-            else:
+            except Exception:
 
-                (
-                    execution_result,
-                    project,
-                    code,
-                    debug_report,
-                ) = retry_result
+                logger.exception(
+                    "Self-healing failed."
+                )
 
-                if execution_result.get("success"):
+                repair_result = None
 
-                    logger.info(
-                        "Project repaired successfully."
+            if repair_result is not None:
+
+                if not isinstance(
+                    repair_result,
+                    tuple,
+                ) or len(repair_result) != 4:
+
+                    logger.error(
+                        "Self-healing returned invalid result."
                     )
 
-                    # -----------------------------------------
-                    # Re-Validate
-                    # -----------------------------------------
+                else:
+
+                    (
+                        execution_result,
+                        project,
+                        code,
+                        debug_report,
+                    ) = repair_result
+
+                    execution_result = (
+                        execution_result
+                        or {}
+                    )
+
+                    debug_report = (
+                        debug_report
+                        or {}
+                    )
+
+                    # ------------------------------------------
+                    # Re-validation
+                    # ------------------------------------------
 
                     try:
 
-                        validation = self.validator.validate(
-                            project["project_path"]
+                        validation = (
+                            self.validator.validate(
+                                project[
+                                    "project_path"
+                                ]
+                            )
+                            or {}
                         )
 
                         logger.info(
                             "Validation completed after repair."
                         )
 
-                    except Exception as e:
+                    except Exception as exc:
 
                         logger.exception(
                             "Validation failed after repair."
                         )
 
-                        validation = {
-                            "valid": False,
-                            "errors": [str(e)],
-                            "warnings": [],
-                        }
+                        validation = (
+                            self._failed_validation(
+                                str(exc)
+                            )
+                        )
 
-                    # -----------------------------------------
-                    # Re-Test
-                    # -----------------------------------------
+                    # ------------------------------------------
+                    # Re-testing
+                    # ------------------------------------------
+
+                    if execution_result.get(
+                        "success"
+                    ):
+
+                        try:
+
+                            test_result = (
+                                self.tester.run(
+                                    project[
+                                        "project_path"
+                                    ]
+                                )
+                                or {}
+                            )
+
+                            logger.info(
+                                "Testing completed after repair."
+                            )
+
+                        except Exception as exc:
+
+                            logger.exception(
+                                "Testing failed after repair."
+                            )
+
+                            test_result = (
+                                self._failed_test_result(
+                                    str(exc)
+                                )
+                            )
+
+                    else:
+
+                        test_result = (
+                            self._failed_test_result(
+                                "Execution failed after repair."
+                            )
+                        )
+
+                    # ------------------------------------------
+                    # Re-review
+                    # ------------------------------------------
 
                     try:
 
-                        test_result = self.tester.run(
-                            project["project_path"]
-                        )
-
-                        logger.info(
-                            "Tests completed after repair."
-                        )
-
-                    except Exception as e:
-
-                        logger.exception(
-                            "Testing failed after repair."
-                        )
-
-                        test_result = {
-                            "success": False,
-                            "stdout": "",
-                            "stderr": str(e),
-                            "return_code": -1,
-                            "execution_time": 0,
-                        }
-
-                    # -----------------------------------------
-                    # Re-Review
-                    # -----------------------------------------
-
-                    try:
-
-                        review = await self.reviewer.run(
-                            code
+                        review = (
+                            await self.reviewer.run(
+                                code
+                            )
+                            or {}
                         )
 
                         logger.info(
                             "Review completed after repair."
                         )
 
-                    except Exception as e:
+                    except Exception as exc:
 
                         logger.exception(
                             "Reviewer failed after repair."
                         )
 
-                        review = {
-                            "success": False,
-                            "error": str(e),
-                        }
+                        review = (
+                            self._failed_review(
+                                str(exc)
+                            )
+                        )
 
-                else:
+                    # ------------------------------------------
+                    # Final repair status
+                    # ------------------------------------------
 
-                    logger.error(
-                        "Self-healing could not repair the project."
-                    )
+                    if (
+                        execution_result.get(
+                            "success"
+                        )
+                        and test_result.get(
+                            "success"
+                        )
+                        and validation.get(
+                            "valid",
+                            False,
+                        )
+                    ):
+
+                        logger.info(
+                            "Self-healing succeeded. "
+                            "Project now passes quality checks."
+                        )
+
+                    else:
+
+                        logger.warning(
+                            "Self-healing completed, but "
+                            "the project still has failures."
+                        )
+
+            else:
+
+                logger.error(
+                    "Self-healing did not return a result."
+                )
 
         else:
 
             logger.info(
-                "Execution and tests passed. Self-healing skipped."
+                "Execution, validation and tests passed. "
+                "Self-healing skipped."
             )
 
-        # =====================================================
+        # ======================================================
         # STEP 9 - SAVE PROJECT
-        # =====================================================
+        # ======================================================
 
-        logger.info("Step 9/9 - Saving project...")
+        logger.info(
+            "Step 9/9 - Saving project..."
+        )
 
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Saving",
-                progress=98,
-                message="Saving project...",
-            )
+        await self._progress(
+            session_id,
+            "Saving",
+            98,
+            "Saving project information...",
+        )
 
         db = SessionLocal()
 
@@ -483,55 +813,109 @@ class AgentOrchestrator:
                 session_id=session_id or "default",
                 title=plan.title,
                 prompt=task,
-                project_path=project["project_path"],
-                zip_path=project["zip_path"],
+                project_path=project[
+                    "project_path"
+                ],
+                zip_path=project[
+                    "zip_path"
+                ],
             )
 
             logger.info(
                 "Project saved successfully."
             )
 
-        except Exception as e:
+        except Exception:
 
+            # Database failure should not destroy
+            # the generated project.
             logger.exception(
-                f"Failed to save project: {e}"
+                "Failed to save project to database."
             )
 
         finally:
 
             db.close()
 
-        # =====================================================
+        # ======================================================
         # COMPLETED
-        # =====================================================
+        # ======================================================
 
-        if session_id:
-            await manager.send_progress(
-                session_id=session_id,
-                step="Completed",
-                progress=100,
-                message="Project generated successfully 🎉",
-            )
+        await self._progress(
+            session_id,
+            "Completed",
+            100,
+            "Project generation completed.",
+        )
 
         logger.info("=" * 60)
         logger.info(
-            "AutoDev AI Pipeline Finished Successfully"
+            "AutoDev AI Pipeline Finished"
         )
         logger.info("=" * 60)
 
-        execution_result = execution_result or {}
-        validation = validation or {}
-        test_result = test_result or {}
-        review = review or {}
-        debug_report = debug_report or {}
+        # ------------------------------------------------------
+        # Normalize results
+        # ------------------------------------------------------
+
+        execution_result = (
+            execution_result
+            or {}
+        )
+
+        validation = (
+            validation
+            or {}
+        )
+
+        test_result = (
+            test_result
+            or {}
+        )
+
+        review = (
+            review
+            or {}
+        )
+
+        debug_report = (
+            debug_report
+            or {}
+        )
+
+        # ------------------------------------------------------
+        # Final result
+        # ------------------------------------------------------
 
         return {
+            "success": bool(
+                execution_result.get(
+                    "success",
+                    False,
+                )
+                and validation.get(
+                    "valid",
+                    False,
+                )
+                and test_result.get(
+                    "success",
+                    False,
+                )
+            ),
+
             "plan": plan.model_dump(),
+
             "project": project,
+
             "execution": execution_result,
+
             "validation": validation,
+
             "tests": test_result,
+
             "debug_report": debug_report,
+
             "review": review,
+
             "improved_code": code,
         }

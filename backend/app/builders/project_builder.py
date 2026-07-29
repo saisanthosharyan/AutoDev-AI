@@ -14,7 +14,7 @@ class ProjectBuilder:
 
     FILE: app.py
 
-    print("Hello")
+    import argparse
 
     FILE: requirements.txt
 
@@ -31,15 +31,13 @@ class ProjectBuilder:
 
     def __init__(self):
 
-        # ProjectBuilder is located at:
-        #
         # backend/app/services/project_builder.py
         #
         # parents[0] = services
         # parents[1] = app
         # parents[2] = backend
         # parents[3] = AutoDev-AI
-        #
+
         root_dir = Path(__file__).resolve().parents[3]
 
         self.output_dir = (
@@ -101,11 +99,6 @@ class ProjectBuilder:
                 project_path
             ).resolve()
 
-        # ------------------------------------------------------
-        # Prevent accidental building outside output directory
-        # when automatic project path is used.
-        # ------------------------------------------------------
-
         project_path.mkdir(
             parents=True,
             exist_ok=True,
@@ -166,42 +159,14 @@ class ProjectBuilder:
         """
         Update an existing project using LLM output.
 
-        IMPORTANT:
-
-        This does NOT delete the existing project.
-
         Only files returned by the LLM are created or replaced.
 
-        Example:
-
-        Existing project:
-
-            app.py
-            config.py
-            README.md
-            requirements.txt
-
-        LLM returns:
-
-            FILE: app.py
-
-            fixed code...
-
-        Result:
-
-            app.py          -> replaced
-            config.py       -> preserved
-            README.md       -> preserved
-            requirements.txt -> preserved
+        Existing files not returned by the LLM are preserved.
         """
 
         project = Path(
             project_path
         ).resolve()
-
-        # ------------------------------------------------------
-        # Validate project
-        # ------------------------------------------------------
 
         if not project.exists():
 
@@ -219,12 +184,6 @@ class ProjectBuilder:
             f"Rebuilding existing project: {project}"
         )
 
-        # ------------------------------------------------------
-        # Write updated files directly into project.
-        #
-        # We intentionally DO NOT delete the project.
-        # ------------------------------------------------------
-
         updated_files = self._write_files(
             project,
             llm_output,
@@ -235,10 +194,6 @@ class ProjectBuilder:
             raise ValueError(
                 "AI repair produced no valid files."
             )
-
-        # ------------------------------------------------------
-        # Create updated ZIP
-        # ------------------------------------------------------
 
         zip_path = self.create_zip(
             project
@@ -281,7 +236,7 @@ class ProjectBuilder:
             )
 
         # ------------------------------------------------------
-        # Clean output
+        # Clean complete LLM output
         # ------------------------------------------------------
 
         llm_output = self._clean_output(
@@ -375,14 +330,12 @@ class ProjectBuilder:
                 .replace("\\", "/")
             )
 
-            # Remove repeated /
             file_path = re.sub(
                 r"/+",
                 "/",
                 file_path,
             )
 
-            # Remove leading ./ safely
             while file_path.startswith("./"):
                 file_path = file_path[2:]
 
@@ -400,7 +353,6 @@ class ProjectBuilder:
 
                 continue
 
-            # Reject absolute Unix path
             if file_path.startswith("/"):
 
                 raise ValueError(
@@ -408,7 +360,6 @@ class ProjectBuilder:
                     f"{file_path}"
                 )
 
-            # Reject Windows drive paths
             if re.match(
                 r"^[A-Za-z]:",
                 file_path,
@@ -422,10 +373,6 @@ class ProjectBuilder:
             path_parts = Path(
                 file_path
             ).parts
-
-            # --------------------------------------------------
-            # Reject . and ..
-            # --------------------------------------------------
 
             if any(
                 part in {
@@ -464,7 +411,7 @@ class ProjectBuilder:
                 continue
 
             # --------------------------------------------------
-            # Duplicate file protection
+            # Duplicate protection
             # --------------------------------------------------
 
             normalized_key = (
@@ -485,11 +432,12 @@ class ProjectBuilder:
             )
 
             # --------------------------------------------------
-            # Clean content
+            # Clean file content
             # --------------------------------------------------
 
-            content = content.strip(
-                "\n"
+            content = self._clean_file_content(
+                file_path,
+                content,
             )
 
             if not content.strip():
@@ -596,6 +544,123 @@ class ProjectBuilder:
         return created
 
     # ==========================================================
+    # CLEAN INDIVIDUAL FILE CONTENT
+    # ==========================================================
+
+    def _clean_file_content(
+        self,
+        file_path: str,
+        content: str,
+    ) -> str:
+        """
+        Remove accidental language labels generated by LLMs.
+
+        Example:
+
+            FILE: app.py
+            python
+            import argparse
+
+        Becomes:
+
+            FILE: app.py
+            import argparse
+        """
+
+        if not content:
+
+            return ""
+
+        content = content.strip("\n")
+
+        suffix = Path(
+            file_path
+        ).suffix.lower()
+
+        language_markers = {
+            ".py": {
+                "python",
+                "py",
+            },
+            ".js": {
+                "javascript",
+                "js",
+            },
+            ".jsx": {
+                "javascript",
+                "jsx",
+            },
+            ".ts": {
+                "typescript",
+                "ts",
+            },
+            ".tsx": {
+                "typescript",
+                "tsx",
+            },
+            ".java": {
+                "java",
+            },
+            ".cpp": {
+                "cpp",
+                "c++",
+            },
+            ".cc": {
+                "cpp",
+                "c++",
+            },
+            ".cxx": {
+                "cpp",
+                "c++",
+            },
+            ".html": {
+                "html",
+            },
+            ".css": {
+                "css",
+            },
+            ".json": {
+                "json",
+            },
+            ".yaml": {
+                "yaml",
+                "yml",
+            },
+            ".yml": {
+                "yaml",
+                "yml",
+            },
+            ".md": {
+                "markdown",
+                "md",
+            },
+        }
+
+        markers = language_markers.get(
+            suffix,
+            set(),
+        )
+
+        lines = content.splitlines()
+
+        if lines:
+
+            first_line = lines[0].strip().lower()
+
+            if first_line in markers:
+
+                logger.warning(
+                    f"Removing accidental language marker "
+                    f"'{lines[0].strip()}' from {file_path}"
+                )
+
+                lines = lines[1:]
+
+        return "\n".join(
+            lines
+        ).strip()
+
+    # ==========================================================
     # CREATE ZIP
     # ==========================================================
 
@@ -629,10 +694,6 @@ class ProjectBuilder:
             ".zip"
         )
 
-        # ------------------------------------------------------
-        # Remove previous archive
-        # ------------------------------------------------------
-
         if zip_file.exists():
 
             try:
@@ -645,10 +706,6 @@ class ProjectBuilder:
                     f"Unable to remove existing ZIP: "
                     f"{zip_file}"
                 ) from e
-
-        # ------------------------------------------------------
-        # Create archive
-        # ------------------------------------------------------
 
         archive = shutil.make_archive(
             base_name=str(
@@ -677,10 +734,7 @@ class ProjectBuilder:
         """
         Completely remove all files from a project.
 
-        NOTE:
-        This method is intentionally NOT used by rebuild().
-        Rebuild should preserve files that were not modified
-        by the LLM.
+        This method is intentionally not used by rebuild().
         """
 
         if not project_path.exists():
@@ -716,7 +770,7 @@ class ProjectBuilder:
                 raise
 
     # ==========================================================
-    # CLEAN LLM OUTPUT
+    # CLEAN COMPLETE LLM OUTPUT
     # ==========================================================
 
     def _clean_output(
@@ -725,15 +779,6 @@ class ProjectBuilder:
     ) -> str:
         """
         Clean common formatting mistakes produced by LLMs.
-
-        The LLM should return only:
-
-        FILE: path
-
-        content
-
-        But local models can sometimes wrap the response
-        inside markdown code fences.
         """
 
         if not text:
@@ -742,10 +787,7 @@ class ProjectBuilder:
 
         text = text.strip()
 
-        # ------------------------------------------------------
-        # Remove opening markdown fence
-        # ------------------------------------------------------
-
+        # Remove opening markdown fence.
         text = re.sub(
             r"^\s*```(?:text|plaintext|"
             r"python|javascript|typescript|"
@@ -758,20 +800,14 @@ class ProjectBuilder:
             flags=re.IGNORECASE,
         )
 
-        # ------------------------------------------------------
-        # Remove closing markdown fence
-        # ------------------------------------------------------
-
+        # Remove closing markdown fence.
         text = re.sub(
             r"\s*```\s*$",
             "",
             text,
         )
 
-        # ------------------------------------------------------
-        # Remove remaining fences
-        # ------------------------------------------------------
-
+        # Remove remaining fences.
         text = text.replace(
             "```",
             "",
@@ -792,7 +828,11 @@ class ProjectBuilder:
 
         Example:
 
-        "My React App!" -> "my_react_app"
+            My React App!
+
+        becomes:
+
+            my_react_app
         """
 
         if not name:
